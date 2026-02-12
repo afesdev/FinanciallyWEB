@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+/* Habilita `dark:` por clase en Tailwind v4 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-float-delay: float 6s ease-in-out 2s infinite;
+  --animate-float-slow: float 8s ease-in-out 1s infinite;
+  --animate-fade-in-up: fadeInUp 0.8s ease-out both;
+  --animate-fade-in-up-delay: fadeInUp 0.8s ease-out 0.2s both;
+  --animate-fade-in-up-delay-2: fadeInUp 0.8s ease-out 0.4s both;
+  --animate-fade-in-up-delay-3: fadeInUp 0.8s ease-out 0.6s both;
+  --animate-pulse-glow: pulseGlow 4s ease-in-out infinite;
+  --animate-spin-slow: spin 20s linear infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-20px); }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.05); }
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  @apply bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100;
+}

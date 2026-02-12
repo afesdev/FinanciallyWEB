@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/src/assets/logo.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Financially te ayuda a controlar tus ingresos, gastos, presupuestos, metas y reportes para tomar mejores decisiones."
+    />
+    <meta
+      name="keywords"
+      content="finanzas personales, control de gastos, presupuesto, metas financieras, reportes financieros, ingresos, gastos, ahorro"
+    />
+    <meta name="author" content="afesdev" />
+    <meta name="application-name" content="Financially" />
+    <meta name="theme-color" content="#10B981" />
+    <meta name="color-scheme" content="light" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+
+    <!-- Open Graph / Social -->
+    <meta property="og:title" content="Financially" />
+    <meta
+      property="og:description"
+      content="Controla tus ingresos y gastos, define presupuestos, cumple metas y genera reportes por periodo."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Financially" />
+    <meta property="og:locale" content="es_CO" />
+    <meta property="og:image" content="/src/assets/logo.svg" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Financially" />
+    <meta
+      name="twitter:description"
+      content="Controla tus ingresos y gastos, define presupuestos, cumple metas y genera reportes por periodo."
+    />
+    <meta name="twitter:image" content="/src/assets/logo.svg" />
+    <title>Financially</title>
+    <style>
+      #loading-logo {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 120px;
+        height: 120px;
+        opacity: 1;
+        transition: opacity 0.3s ease-out;
+        z-index: 9999;
+      }
+      #loading-logo.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <img id="loading-logo" src="/src/assets/logo.svg" alt="Financially Logo" />
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Ocultar el logo cuando React cargue
+      window.addEventListener('load', () => {
+        setTimeout(() => {
+          const logo = document.getElementById('loading-logo');
+          if (logo) logo.classList.add('hidden');
+        }, 300);
+      });
+    </script>
+  </body>
+</html>
