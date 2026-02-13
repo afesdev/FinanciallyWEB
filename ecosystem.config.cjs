@@ -3,8 +3,8 @@ module.exports = {
     {
       name: 'financially-frontend',
       script: 'npm',
-      args: 'run preview',
-      cwd: './FinanciallyWEB',
+      args: 'run preview -- --host',
+      cwd: '.',
       instances: 1,
       exec_mode: 'fork',
       env: {
