@@ -3,13 +3,13 @@ module.exports = {
     {
       name: 'financially-frontend',
       script: 'npm',
-      args: 'run preview -- --host',
+      args: 'run preview -- --host --port 4176',
       cwd: '.',
       instances: 1,
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
-        PORT: 4173,
+        PORT: 4176,
       },
       error_file: './logs/financially-err.log',
       out_file: './logs/financially-out.log',
