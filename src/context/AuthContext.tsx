@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
 import type { AuthUser, AuthResponse } from '../services/api'
-import { getProfile } from '../services/api'
+import { getProfile, logoutSession } from '../services/api'
 
 type AuthContextType = {
   user: AuthUser | null
@@ -31,11 +31,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setToken(parsed.accessToken)
       setUser(parsed.user)
 
+      // getProfile pasa por authRequest: si el access token expiró pero el
+      // refresh sigue válido, se renueva solo y la sesión se mantiene.
       getProfile()
         .then((profile) => {
           setUser(profile)
-          const updated = { ...parsed, user: profile }
-          localStorage.setItem('financially_auth', JSON.stringify(updated))
+          const fresco = localStorage.getItem('financially_auth')
+          if (fresco) {
+            const actual = JSON.parse(fresco) as AuthResponse
+            setToken(actual.accessToken)
+            localStorage.setItem('financially_auth', JSON.stringify({ ...actual, user: profile }))
+          }
         })
         .catch(() => {
           localStorage.removeItem('financially_auth')
@@ -47,6 +53,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('financially_auth')
       setIsLoading(false)
     }
+  }, [])
+
+  // Renovación fallida en cualquier petición: forzar cierre de sesión.
+  useEffect(() => {
+    const onForcedLogout = () => {
+      setToken(null)
+      setUser(null)
+    }
+    window.addEventListener('auth:logout', onForcedLogout)
+    return () => window.removeEventListener('auth:logout', onForcedLogout)
   }, [])
 
   const saveAuth = (auth: AuthResponse) => {
@@ -69,7 +85,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const logout = () => {
-    localStorage.removeItem('financially_auth')
+    // Revoca el refresh token en el servidor (best-effort) y limpia local.
+    void logoutSession()
     setToken(null)
     setUser(null)
   }

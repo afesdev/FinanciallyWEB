@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { motion, useReducedMotion } from 'motion/react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
@@ -17,23 +18,23 @@ import {
   type Categoria,
 } from '../services/api'
 import { formatCurrency } from '../utils/format'
+import { presupuestoResumen } from '../utils/presupuestos'
 import Sidebar from '../components/dashboard/Sidebar'
 import Navbar from '../components/dashboard/Navbar'
+import { AnimatedCurrency } from '../components/dashboard/StatsCards'
 import { useSidebarCollapsed } from '../hooks/useSidebarCollapsed'
+import BudgetCard from '../components/budgets/BudgetCard'
 import PresupuestoFormModal from '../components/budgets/PresupuestoFormModal'
 import Swal from 'sweetalert2'
 
 const FILTERS = [
-  { key: 'activos' as const, label: 'Activos' },
-  { key: 'todos' as const, label: 'Todos' },
-]
+  { key: 'activos', label: 'Activos' },
+  { key: 'riesgo', label: 'En riesgo' },
+  { key: 'excedidos', label: 'Excedidos' },
+  { key: 'todos', label: 'Todos' },
+] as const
 
-const PERIODO_LABEL: Record<string, string> = {
-  SEMANAL: 'Semanal',
-  MENSUAL: 'Mensual',
-  ANUAL: 'Anual',
-  PERSONALIZADO: 'Personalizado',
-}
+type FilterKey = (typeof FILTERS)[number]['key']
 
 function PresupuestosPage() {
   const navigate = useNavigate()
@@ -44,11 +45,12 @@ function PresupuestosPage() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [categories, setCategories] = useState<Categoria[]>([])
   const [loading, setLoading] = useState(true)
-  const [filterActivos, setFilterActivos] = useState<'activos' | 'todos'>('activos')
+  const [filtro, setFiltro] = useState<FilterKey>('activos')
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingPresupuesto, setEditingPresupuesto] = useState<Presupuesto | null>(null)
   const [saving, setSaving] = useState(false)
   const [recalcId, setRecalcId] = useState<number | null>(null)
+  const reduceMotion = useReducedMotion()
 
   const nombre = user?.nombre ?? 'Usuario'
   const moneda = user?.monedaPredeterminada ?? 'COP'
@@ -56,9 +58,8 @@ function PresupuestosPage() {
   const fetchData = async () => {
     try {
       setLoading(true)
-      const activosSolo = filterActivos === 'activos'
       const [budgetsData, accountsData, categoriesData] = await Promise.all([
-        getBudgets(activosSolo),
+        getBudgets(filtro === 'todos' ? undefined : true),
         getAccounts(),
         getCategories(),
       ])
@@ -75,7 +76,7 @@ function PresupuestosPage() {
 
   useEffect(() => {
     fetchData()
-  }, [filterActivos])
+  }, [filtro])
 
   const handleCreate = async (data: CreatePresupuestoDto) => {
     try {
@@ -143,7 +144,6 @@ function PresupuestosPage() {
     try {
       setRecalcId(p.id)
       await recalcPresupuesto(p.id)
-      Swal.fire({ icon: 'success', title: 'Gasto actualizado', timer: 1200, showConfirmButton: false })
       fetchData()
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'No se pudo recalcular.'
@@ -161,6 +161,7 @@ function PresupuestosPage() {
     else if (key === 'loans') navigate('/loans')
     else if (key === 'budgets') navigate('/budgets')
     else if (key === 'transactions') navigate('/transactions')
+    else if (key === 'dashboard') navigate('/dashboard')
     else if (key === 'reports') navigate('/reports')
     else if (key === 'profile') navigate('/profile')
   }
@@ -169,6 +170,32 @@ function PresupuestosPage() {
     logout()
     navigate('/login')
   }
+
+  const categoriaPorId = useMemo(() => {
+    const mapa = new Map<number, Categoria>()
+    categories.forEach((c) => mapa.set(c.id, c))
+    return mapa
+  }, [categories])
+
+  const cuentaPorId = useMemo(() => {
+    const mapa = new Map<number, Account>()
+    accounts.forEach((a) => mapa.set(a.id, a))
+    return mapa
+  }, [accounts])
+
+  const totalLimite = presupuestos.reduce((s, p) => s + (Number(p.monto_limite) || 0), 0)
+  const totalGastado = presupuestos.reduce((s, p) => s + (Number(p.monto_gastado) || 0), 0)
+  const totalDisponible = Math.max(0, totalLimite - totalGastado)
+  const pctGlobal = totalLimite > 0 ? Math.min(100, (totalGastado / totalLimite) * 100) : 0
+
+  const excedidos = presupuestos.filter((p) => presupuestoResumen(p).estado === 'EXCEDIDO').length
+  const enRiesgo = presupuestos.filter((p) => presupuestoResumen(p).estado === 'EN_RIESGO').length
+
+  const visibles = presupuestos.filter((p) => {
+    if (filtro === 'excedidos') return presupuestoResumen(p).estado === 'EXCEDIDO'
+    if (filtro === 'riesgo') return presupuestoResumen(p).estado === 'EN_RIESGO'
+    return true
+  })
 
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -188,158 +215,202 @@ function PresupuestosPage() {
         <Navbar nombre={nombre} email={user?.email} onOpenSidebar={() => setSidebarOpen(true)} />
 
         <main className="flex-1 px-4 py-6 lg:px-8">
-          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Presupuestos</h1>
+              <h1 className="text-2xl font-semibold tracking-[-0.02em] text-slate-900 dark:text-slate-50">
+                Presupuestos
+              </h1>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                Controla tus gastos por categoría o período
+                Cuánto puedes gastar y cómo vas frente al ritmo del periodo
               </p>
             </div>
-            <button
+            <motion.button
+              whileHover={reduceMotion ? undefined : { y: -2 }}
+              whileTap={{ scale: 0.97 }}
               onClick={() => setShowCreateModal(true)}
-              className="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-400/60 transition-all hover:bg-emerald-600"
+              className="inline-flex items-center gap-2 self-start rounded-full bg-brand-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-600 sm:self-auto"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               Nuevo presupuesto
-            </button>
+            </motion.button>
           </div>
 
-          <div className="mb-6 flex gap-2">
-            {FILTERS.map((f) => (
-              <button
-                key={f.key}
-                onClick={() => setFilterActivos(f.key)}
-                className={`rounded-full px-4 py-2 text-sm font-medium transition-all ${
-                  filterActivos === f.key
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-white text-slate-600 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
+          {!loading && presupuestos.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: reduceMotion ? 0 : 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+              className="relative isolate mb-6 overflow-hidden rounded-3xl bg-slate-900 p-6 text-white lg:p-7"
+            >
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 opacity-[0.12] [background-image:linear-gradient(to_right,#fff_1px,transparent_1px),linear-gradient(to_bottom,#fff_1px,transparent_1px)] [background-size:64px_64px] [mask-image:radial-gradient(ellipse_at_top_right,#000,transparent_70%)]"
+              />
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full blur-3xl"
+                style={{
+                  backgroundColor: excedidos > 0 ? 'rgba(244,63,94,0.22)' : 'rgba(30,178,86,0.25)',
+                }}
+              />
+
+              <div className="relative flex flex-wrap items-start justify-between gap-6">
+                <div>
+                  <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-white/50">
+                    Disponible en total
+                  </p>
+                  <p className="mt-2 text-4xl font-semibold tabular-nums tracking-tight">
+                    <AnimatedCurrency value={totalDisponible} moneda={moneda} />
+                  </p>
+                  <p className="mt-2 text-sm tabular-nums text-white/50">
+                    Llevas {formatCurrency(totalGastado, moneda)} de{' '}
+                    {formatCurrency(totalLimite, moneda)}
+                  </p>
+                </div>
+
+                <div className="flex gap-5">
+                  <div className="text-right">
+                    <p className="text-2xl font-semibold tabular-nums">{presupuestos.length}</p>
+                    <p className="text-xs text-white/50">
+                      {presupuestos.length === 1 ? 'presupuesto' : 'presupuestos'}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-semibold tabular-nums text-amber-300">{enRiesgo}</p>
+                    <p className="text-xs text-white/50">en riesgo</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-semibold tabular-nums text-rose-300">{excedidos}</p>
+                    <p className="text-xs text-white/50">
+                      {excedidos === 1 ? 'excedido' : 'excedidos'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="relative mt-7">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
+                  <motion.span
+                    initial={{ width: 0 }}
+                    animate={{ width: `${pctGlobal}%` }}
+                    transition={{ delay: 0.3, duration: 0.8, ease: 'easeOut' }}
+                    className="block h-full rounded-full"
+                    style={{ backgroundColor: excedidos > 0 ? '#F43F5E' : '#45c184' }}
+                  />
+                </div>
+                <p className="mt-2 text-xs tabular-nums text-white/50">
+                  {Math.round(pctGlobal)}% del total presupuestado
+                </p>
+              </div>
+            </motion.div>
+          )}
+
+          <div className="mb-5 flex flex-wrap gap-2">
+            {FILTERS.map((f) => {
+              const count =
+                f.key === 'excedidos' ? excedidos : f.key === 'riesgo' ? enRiesgo : null
+              return (
+                <button
+                  key={f.key}
+                  onClick={() => setFiltro(f.key)}
+                  className={`rounded-full px-4 py-1.5 text-sm transition-colors ${
+                    filtro === f.key
+                      ? 'bg-slate-900 font-medium text-white dark:bg-slate-100 dark:text-slate-900'
+                      : 'border border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:text-slate-100'
+                  }`}
+                >
+                  {f.label}
+                  {count !== null && count > 0 && (
+                    <span className="ml-1.5 tabular-nums opacity-60">{count}</span>
+                  )}
+                </button>
+              )
+            })}
           </div>
 
           {loading ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {[1, 2, 3, 4, 5, 6].map((i) => (
                 <div
                   key={i}
-                  className="animate-pulse rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900"
-                >
-                  <div className="mb-3 h-4 w-32 rounded bg-slate-200 dark:bg-slate-700" />
-                  <div className="mb-2 h-6 w-24 rounded bg-slate-200 dark:bg-slate-700" />
-                  <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-800" />
-                </div>
+                  className="h-56 animate-pulse rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+                />
               ))}
             </div>
-          ) : presupuestos.length > 0 ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {presupuestos.map((p) => {
-                const gastado = p.monto_gastado ?? 0
-                const limite = p.monto_limite || 1
-                const progress = Math.min(100, Math.round((gastado / limite) * 100))
-                const isOver = gastado > limite
+          ) : visibles.length > 0 ? (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {visibles.map((p, i) => {
+                const categoria = p.categoria_id ? categoriaPorId.get(p.categoria_id) : undefined
+                const cuenta = p.cuenta_id ? cuentaPorId.get(p.cuenta_id) : undefined
                 return (
-                  <div
+                  <BudgetCard
                     key={p.id}
-                    className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all hover:shadow-md dark:border-slate-700 dark:bg-slate-900"
-                  >
-                    <div className={`h-1 w-full ${isOver ? 'bg-rose-500' : 'bg-emerald-500'}`} />
-                    <div className="p-5">
-                      <div className="mb-3 flex items-start justify-between">
-                        <div>
-                          <h3 className="text-base font-semibold text-slate-900 dark:text-slate-50">{p.nombre}</h3>
-                          <span className="mt-0.5 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                            {PERIODO_LABEL[p.periodo] ?? p.periodo}
-                          </span>
-                        </div>
-                        {!p.activo && (
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                            Inactivo
-                          </span>
-                        )}
-                      </div>
-                      <div className="mb-3">
-                        <div className="mb-1 flex justify-between text-xs">
-                          <span className="text-slate-500 dark:text-slate-400">Gastado</span>
-                          <span
-                            className={`font-semibold ${
-                              isOver ? 'text-rose-600 dark:text-rose-300' : 'text-slate-700 dark:text-slate-100'
-                            }`}
-                          >
-                            {progress}%
-                          </span>
-                        </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
-                          <div
-                            className={`h-full rounded-full transition-all ${isOver ? 'bg-rose-500' : 'bg-emerald-500'}`}
-                            style={{ width: `${Math.min(100, progress)}%` }}
-                          />
-                        </div>
-                        <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-50">
-                          {formatCurrency(gastado, moneda)} de {formatCurrency(limite, moneda)}
-                        </p>
-                        {p.fecha_inicio && p.fecha_fin && (
-                          <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
-                            {new Date(p.fecha_inicio).toLocaleDateString('es-CO')} – {new Date(p.fecha_fin).toLocaleDateString('es-CO')}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
-                        <button
-                          type="button"
-                          onClick={() => handleRecalc(p)}
-                          disabled={recalcId === p.id}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
-                        >
-                          {recalcId === p.id ? 'Actualizando...' : 'Actualizar gasto'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditingPresupuesto(p)}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleToggle(p)}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
-                        >
-                          {p.activo ? 'Desactivar' : 'Activar'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(p)}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 hover:bg-rose-100 dark:border-rose-500/60 dark:bg-rose-900/30 dark:text-rose-200 dark:hover:bg-rose-900/50"
-                        >
-                          Eliminar
-                        </button>
-                      </div>
-                    </div>
-                  </div>
+                    presupuesto={p}
+                    moneda={moneda}
+                    index={i}
+                    categoriaNombre={categoria?.nombre}
+                    categoriaColor={categoria?.color}
+                    cuentaNombre={cuenta?.nombre}
+                    recalculando={recalcId === p.id}
+                    onRecalc={handleRecalc}
+                    onEdit={setEditingPresupuesto}
+                    onToggle={handleToggle}
+                    onDelete={handleDelete}
+                  />
                 )
               })}
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-16 dark:border-slate-700 dark:bg-slate-900">
-              <div className="mb-4 rounded-full bg-emerald-50 p-4 dark:bg-emerald-900/40">
-                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-600">
-                  <line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/>
+            <div className="relative isolate flex flex-col items-center justify-center overflow-hidden rounded-3xl border border-dashed border-slate-200 bg-white px-4 py-16 dark:border-slate-700 dark:bg-slate-900">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 opacity-[0.05] [background-image:radial-gradient(#0f172a_1px,transparent_1px)] [background-size:16px_16px] [mask-image:radial-gradient(ellipse_at_center,#000,transparent_70%)]"
+              />
+              <div className="relative mb-4 rounded-2xl bg-brand-50 p-4 ring-1 ring-brand-100 dark:bg-brand-900/30 dark:ring-brand-800/50">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="32"
+                  height="32"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-brand-600 dark:text-brand-400"
+                >
+                  <path d="M3 20h18" />
+                  <path d="M6.5 20v-6" />
+                  <path d="M12 20V5" />
+                  <path d="M17.5 20v-9" />
                 </svg>
               </div>
-              <h3 className="mb-1 text-base font-semibold text-slate-900 dark:text-slate-50">Sin presupuestos</h3>
-              <p className="mb-4 text-center text-sm text-slate-500 dark:text-slate-400">
-                {filterActivos === 'activos' ? 'No tienes presupuestos activos' : 'Crea tu primer presupuesto para controlar gastos'}
+              <h3 className="relative mb-1 text-base font-semibold text-slate-900 dark:text-slate-50">
+                {presupuestos.length === 0 ? 'Sin presupuestos' : 'Nada con ese filtro'}
+              </h3>
+              <p className="relative mb-5 text-center text-sm text-slate-500 dark:text-slate-400">
+                {presupuestos.length === 0
+                  ? 'Define un límite de gasto y te avisamos antes de que te pases'
+                  : filtro === 'excedidos'
+                    ? 'Ningún presupuesto se ha excedido. Buena señal.'
+                    : 'Ningún presupuesto va a ritmo alto ahora mismo.'}
               </p>
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-600"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-                Nuevo presupuesto
-              </button>
+              {presupuestos.length === 0 ? (
+                <button
+                  onClick={() => setShowCreateModal(true)}
+                  className="relative inline-flex items-center gap-2 rounded-full bg-brand-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-600"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                  Nuevo presupuesto
+                </button>
+              ) : (
+                <button
+                  onClick={() => setFiltro('activos')}
+                  className="relative text-sm font-medium text-brand-600 hover:text-brand-700"
+                >
+                  Ver activos
+                </button>
+              )}
             </div>
           )}
         </main>
@@ -349,15 +420,17 @@ function PresupuestosPage() {
         open={showCreateModal}
         accounts={accounts}
         categories={categories}
+        moneda={moneda}
         loading={saving}
         onClose={() => setShowCreateModal(false)}
         onSubmit={(data) => handleCreate(data as CreatePresupuestoDto)}
       />
       <PresupuestoFormModal
         open={!!editingPresupuesto}
-        presupuesto={editingPresupuesto ?? undefined}
+        presupuesto={editingPresupuesto}
         accounts={accounts}
         categories={categories}
+        moneda={moneda}
         loading={saving}
         onClose={() => setEditingPresupuesto(null)}
         onSubmit={handleUpdate}

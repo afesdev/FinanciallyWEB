@@ -4,6 +4,15 @@ import type { Account } from '../../services/api'
 import type { Categoria } from '../../services/api'
 import { TIPO_TRANSACCION } from '../../services/api'
 
+// Fecha de hoy en zona local, no en UTC. Con .toISOString() la tarde en
+// Colombia (UTC-5) ya cae en el día siguiente y la transacción se fechaba mal.
+function hoyLocal(): string {
+  const d = new Date()
+  const mes = String(d.getMonth() + 1).padStart(2, '0')
+  const dia = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${mes}-${dia}`
+}
+
 type Frecuencia = 'DIARIO' | 'SEMANAL' | 'MENSUAL' | 'BIMESTRAL' | 'TRIMESTRAL' | 'SEMESTRAL' | 'ANUAL'
 
 const FRECUENCIAS: { key: Frecuencia; label: string }[] = [
@@ -41,7 +50,7 @@ export default function TransaccionFormModal({
   const [monto, setMonto] = useState('')
   const [titulo, setTitulo] = useState('')
   const [descripcion, setDescripcion] = useState('')
-  const [fechaTransaccion, setFechaTransaccion] = useState(new Date().toISOString().slice(0, 10))
+  const [fechaTransaccion, setFechaTransaccion] = useState(hoyLocal())
   const [notas, setNotas] = useState('')
   const [repetir, setRepetir] = useState(false)
   const [frecuencia, setFrecuencia] = useState<Frecuencia>('MENSUAL')
@@ -62,7 +71,7 @@ export default function TransaccionFormModal({
       setMonto('')
       setTitulo('')
       setDescripcion('')
-      setFechaTransaccion(new Date().toISOString().slice(0, 10))
+      setFechaTransaccion(hoyLocal())
       setNotas('')
       setRepetir(false)
       setFrecuencia('MENSUAL')

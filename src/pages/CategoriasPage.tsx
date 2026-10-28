@@ -129,6 +129,7 @@ function CategoriasPage() {
     else if (key === 'loans') navigate('/loans')
     else if (key === 'budgets') navigate('/budgets')
     else if (key === 'transactions') navigate('/transactions')
+    else if (key === 'dashboard') navigate('/dashboard')
     else if (key === 'reports') navigate('/reports')
     else if (key === 'profile') navigate('/profile')
   }

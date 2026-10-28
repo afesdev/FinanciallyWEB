@@ -1,18 +1,33 @@
-import { useState, useEffect, useMemo, type FormEvent } from 'react'
-import type { Presupuesto, CreatePresupuestoDto, UpdatePresupuestoDto } from '../../services/api'
-import type { Account } from '../../services/api'
-import type { Categoria } from '../../services/api'
+import { useMemo, useState, type FormEvent } from 'react'
+import type {
+  Presupuesto,
+  CreatePresupuestoDto,
+  UpdatePresupuestoDto,
+  Account,
+  Categoria,
+} from '../../services/api'
+import { formatCurrency } from '../../utils/format'
+import Modal from '../ui/Modal'
 
-const PERIODOS: { value: 'SEMANAL' | 'MENSUAL' | 'ANUAL' | 'PERSONALIZADO'; label: string }[] = [
+type Periodo = 'SEMANAL' | 'MENSUAL' | 'ANUAL' | 'PERSONALIZADO'
+
+const PERIODOS: { value: Periodo; label: string }[] = [
   { value: 'SEMANAL', label: 'Semanal' },
   { value: 'MENSUAL', label: 'Mensual' },
   { value: 'ANUAL', label: 'Anual' },
-  { value: 'PERSONALIZADO', label: 'Personalizado' },
+  { value: 'PERSONALIZADO', label: 'A medida' },
 ]
+
+const inputClass =
+  'w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100'
+
+const labelClass =
+  'mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400'
 
 function getEndDateFromStart(periodo: string, startStr: string): string {
   if (!startStr) return ''
-  const start = new Date(startStr)
+  const start = new Date(`${startStr}T00:00:00`)
+  if (Number.isNaN(start.getTime())) return ''
   if (periodo === 'SEMANAL') {
     const end = new Date(start)
     end.setDate(end.getDate() + 6)
@@ -33,6 +48,7 @@ type PresupuestoFormModalProps = {
   presupuesto?: Presupuesto | null
   accounts: Account[]
   categories: Categoria[]
+  moneda?: string
   loading?: boolean
   onClose: () => void
   onSubmit: (data: CreatePresupuestoDto | UpdatePresupuestoDto) => Promise<void> | void
@@ -43,70 +59,125 @@ export default function PresupuestoFormModal({
   presupuesto,
   accounts,
   categories,
+  moneda = 'COP',
   loading,
   onClose,
   onSubmit,
 }: PresupuestoFormModalProps) {
-  const [nombre, setNombre] = useState('')
-  const [periodo, setPeriodo] = useState<'SEMANAL' | 'MENSUAL' | 'ANUAL' | 'PERSONALIZADO'>('MENSUAL')
-  const [fechaInicio, setFechaInicio] = useState('')
-  const [fechaFin, setFechaFin] = useState('')
-  const [montoLimite, setMontoLimite] = useState('')
-  const [categoriaId, setCategoriaId] = useState<number | ''>('')
-  const [cuentaId, setCuentaId] = useState<number | ''>('')
-  const [notas, setNotas] = useState('')
-  const [activa, setActiva] = useState(true)
+  return (
+    <Modal
+      open={open}
+      title={presupuesto ? 'Editar presupuesto' : 'Nuevo presupuesto'}
+      subtitle={
+        presupuesto
+          ? 'Ajusta el límite, el periodo o su alcance'
+          : 'Define cuánto puedes gastar y en qué'
+      }
+      locked={loading}
+      onClose={onClose}
+    >
+      <PresupuestoForm
+        key={presupuesto?.id ?? 'nuevo'}
+        presupuesto={presupuesto}
+        accounts={accounts}
+        categories={categories}
+        moneda={moneda}
+        loading={loading}
+        onClose={onClose}
+        onSubmit={onSubmit}
+      />
+    </Modal>
+  )
+}
+
+type PresupuestoFormProps = {
+  presupuesto?: Presupuesto | null
+  accounts: Account[]
+  categories: Categoria[]
+  moneda: string
+  loading?: boolean
+  onClose: () => void
+  onSubmit: (data: CreatePresupuestoDto | UpdatePresupuestoDto) => Promise<void> | void
+}
+
+function PresupuestoForm({
+  presupuesto,
+  accounts,
+  categories,
+  moneda,
+  loading,
+  onClose,
+  onSubmit,
+}: PresupuestoFormProps) {
+  const inicioPorDefecto = (() => {
+    const hoy = new Date()
+    return new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().slice(0, 10)
+  })()
+
+  const [nombre, setNombre] = useState(presupuesto?.nombre ?? '')
+  const [periodo, setPeriodo] = useState<Periodo>(presupuesto?.periodo ?? 'MENSUAL')
+  const [fechaInicio, setFechaInicio] = useState(
+    presupuesto?.fecha_inicio ? presupuesto.fecha_inicio.slice(0, 10) : inicioPorDefecto,
+  )
+  const [fechaFin, setFechaFin] = useState(
+    presupuesto?.fecha_fin
+      ? presupuesto.fecha_fin.slice(0, 10)
+      : getEndDateFromStart('MENSUAL', inicioPorDefecto),
+  )
+  const [montoLimite, setMontoLimite] = useState(
+    presupuesto ? String(presupuesto.monto_limite || 0) : '',
+  )
+  const [categoriaId, setCategoriaId] = useState<number | ''>(presupuesto?.categoria_id ?? '')
+  const [cuentaId, setCuentaId] = useState<number | ''>(presupuesto?.cuenta_id ?? '')
+  const [notas, setNotas] = useState(presupuesto?.notas ?? '')
+  const [activa, setActiva] = useState(presupuesto?.activo ?? true)
 
   const isEdit = !!presupuesto
   const isPersonalizado = periodo === 'PERSONALIZADO'
 
-  const gastoCategorias = useMemo(() => categories.filter((c) => c.tipo === 'GASTO' || c.tipo === 'AMBOS'), [categories])
+  const gastoCategorias = useMemo(
+    () => categories.filter((c) => c.tipo === 'GASTO' || c.tipo === 'AMBOS'),
+    [categories],
+  )
 
-  useEffect(() => {
-    if (presupuesto) {
-      setNombre(presupuesto.nombre)
-      setPeriodo(presupuesto.periodo)
-      setFechaInicio(presupuesto.fecha_inicio ? presupuesto.fecha_inicio.slice(0, 10) : '')
-      setFechaFin(presupuesto.fecha_fin ? presupuesto.fecha_fin.slice(0, 10) : '')
-      setMontoLimite(String(presupuesto.monto_limite || 0))
-      setCategoriaId(presupuesto.categoria_id ?? '')
-      setCuentaId(presupuesto.cuenta_id ?? '')
-      setNotas(presupuesto.notas || '')
-      setActiva(presupuesto.activo)
-    } else {
-      const today = new Date()
-      const start = new Date(today.getFullYear(), today.getMonth(), 1)
-      setNombre('')
-      setPeriodo('MENSUAL')
-      setFechaInicio(start.toISOString().slice(0, 10))
-      setFechaFin(getEndDateFromStart('MENSUAL', start.toISOString().slice(0, 10)))
-      setMontoLimite('')
-      setCategoriaId('')
-      setCuentaId('')
-      setNotas('')
-      setActiva(true)
+  const autoFechaFin = !isEdit
+
+  const cambiarPeriodo = (nuevo: Periodo) => {
+    setPeriodo(nuevo)
+    if (autoFechaFin && nuevo !== 'PERSONALIZADO' && fechaInicio) {
+      setFechaFin(getEndDateFromStart(nuevo, fechaInicio))
     }
-  }, [presupuesto, open])
+  }
 
-  useEffect(() => {
-    if (!open || isEdit) return
-    if (periodo !== 'PERSONALIZADO' && fechaInicio) {
-      setFechaFin(getEndDateFromStart(periodo, fechaInicio))
+  const cambiarFechaInicio = (nueva: string) => {
+    setFechaInicio(nueva)
+    if (autoFechaFin && periodo !== 'PERSONALIZADO' && nueva) {
+      setFechaFin(getEndDateFromStart(periodo, nueva))
     }
-  }, [periodo, fechaInicio, open, isEdit])
+  }
 
-  if (!open) return null
+  const monto = Number(montoLimite) || 0
+  const fechaInvalida = Boolean(fechaFin && fechaInicio && fechaFin < fechaInicio)
+
+  const diasPeriodo = (() => {
+    if (!fechaInicio || !fechaFin || fechaInvalida) return null
+    const inicio = new Date(`${fechaInicio}T00:00:00`)
+    const fin = new Date(`${fechaFin}T00:00:00`)
+    if (Number.isNaN(inicio.getTime()) || Number.isNaN(fin.getTime())) return null
+    return Math.max(1, Math.round((fin.getTime() - inicio.getTime()) / 86_400_000) + 1)
+  })()
+
+  const porDia = diasPeriodo && monto > 0 ? Math.floor(monto / diasPeriodo) : null
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    const monto = Number(montoLimite) || 0
-    if (monto <= 0) return
+    if (monto <= 0 || fechaInvalida) return
     const data: CreatePresupuestoDto | UpdatePresupuestoDto = {
       nombre: nombre.trim(),
       periodo,
       montoLimite: monto,
       fechaInicio: fechaInicio ? `${fechaInicio}T00:00:00` : undefined,
-      fechaFin: isPersonalizado && fechaFin ? `${fechaFin}T23:59:59` : periodo !== 'PERSONALIZADO' && fechaFin ? `${fechaFin}T23:59:59` : undefined,
+      fechaFin: fechaFin ? `${fechaFin}T23:59:59` : undefined,
       categoriaId: categoriaId === '' ? undefined : Number(categoriaId),
       cuentaId: cuentaId === '' ? undefined : Number(cuentaId),
       notas: notas.trim() || undefined,
@@ -118,160 +189,226 @@ export default function PresupuestoFormModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 px-4">
-      <div className="flex w-full max-w-lg max-h-[90vh] flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">
-            {isEdit ? 'Editar presupuesto' : 'Nuevo presupuesto'}
-          </h2>
-          <button
-            type="button"
-            className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-100"
-            onClick={onClose}
-            disabled={!!loading}
-          >
-            ✕
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="flex-1 space-y-4 overflow-y-auto pr-1">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">Nombre *</label>
-            <input
-              type="text"
-              required
-              value={nombre}
-              onChange={(e) => setNombre(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              placeholder="Ej: Gastos de comida"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">Período *</label>
-            <select
-              value={periodo}
-              onChange={(e) => setPeriodo(e.target.value as typeof periodo)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-            >
-              {PERIODOS.map((p) => (
-                <option key={p.value} value={p.value}>{p.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">Fecha inicio</label>
-              <input
-                type="date"
-                value={fechaInicio}
-                onChange={(e) => setFechaInicio(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                Fecha fin {isPersonalizado ? '' : '(calculada)'}
-              </label>
-              <input
-                type="date"
-                value={fechaFin}
-                onChange={(e) => setFechaFin(e.target.value)}
-                disabled={!isPersonalizado}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 disabled:opacity-70 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">Monto límite *</label>
-            <input
-              type="number"
-              required
-              min="1"
-              value={montoLimite}
-              onChange={(e) => setMontoLimite(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              placeholder="0"
-            />
-          </div>
-
-          {gastoCategorias.length > 0 && (
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">Categoría (opcional)</label>
-              <select
-                value={categoriaId === '' ? '' : categoriaId}
-                onChange={(e) => setCategoriaId(e.target.value === '' ? '' : Number(e.target.value))}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                <option value="">Todas las categorías</option>
-                {gastoCategorias.map((c) => (
-                  <option key={c.id} value={c.id}>{c.nombre}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {accounts.length > 0 && (
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">Cuenta (opcional)</label>
-              <select
-                value={cuentaId === '' ? '' : cuentaId}
-                onChange={(e) => setCuentaId(e.target.value === '' ? '' : Number(e.target.value))}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                <option value="">Todas las cuentas</option>
-                {accounts.map((acc) => (
-                  <option key={acc.id} value={acc.id}>{acc.nombre}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">Notas (opcional)</label>
-            <textarea
-              value={notas}
-              onChange={(e) => setNotas(e.target.value)}
-              rows={2}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              placeholder="Ej: Solo restaurantes"
-            />
-          </div>
-
-          {isEdit && (
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="presupuesto-activo"
-                checked={activa}
-                onChange={(e) => setActiva(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-emerald-500 focus:ring-emerald-400"
-              />
-              <label htmlFor="presupuesto-activo" className="text-sm text-slate-700 dark:text-slate-300">Presupuesto activo</label>
-            </div>
-          )}
-
-          <div className="flex gap-3 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={!!loading}
-              className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={!!loading}
-              className="flex-1 rounded-full bg-gradient-to-r from-emerald-500 to-cyan-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:shadow-emerald-400/90 disabled:opacity-60"
-            >
-              {loading ? 'Guardando...' : isEdit ? 'Actualizar' : 'Crear presupuesto'}
-            </button>
-          </div>
-        </form>
+    <form onSubmit={handleSubmit} className="space-y-5">
+      <div>
+        <label htmlFor="presupuesto-nombre" className={labelClass}>
+          Nombre <span className="text-rose-500">*</span>
+        </label>
+        <input
+          id="presupuesto-nombre"
+          type="text"
+          required
+          autoFocus
+          value={nombre}
+          onChange={(e) => setNombre(e.target.value)}
+          className={inputClass}
+          placeholder="Ej: Mercado del mes"
+        />
       </div>
-    </div>
+
+      <div>
+        <span className={labelClass}>Periodo</span>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {PERIODOS.map((p) => (
+            <button
+              key={p.value}
+              type="button"
+              onClick={() => cambiarPeriodo(p.value)}
+              aria-pressed={periodo === p.value}
+              className={`rounded-2xl border px-3 py-2.5 text-xs font-medium transition-colors ${
+                periodo === p.value
+                  ? 'border-brand-400 bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300'
+                  : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:text-slate-100'
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label htmlFor="presupuesto-monto" className={labelClass}>
+          Límite de gasto <span className="text-rose-500">*</span>
+        </label>
+        <input
+          id="presupuesto-monto"
+          type="number"
+          required
+          min="1"
+          value={montoLimite}
+          onChange={(e) => setMontoLimite(e.target.value)}
+          className={`${inputClass} tabular-nums`}
+          placeholder="0"
+        />
+        {monto > 0 && (
+          <p className="mt-1.5 text-xs tabular-nums text-slate-400 dark:text-slate-500">
+            {formatCurrency(monto, moneda)}
+            {porDia !== null && ` · ${formatCurrency(porDia, moneda)} por día`}
+          </p>
+        )}
+      </div>
+
+      <div className="grid gap-5 sm:grid-cols-2">
+        <div>
+          <label htmlFor="presupuesto-inicio" className={labelClass}>
+            Desde
+          </label>
+          <input
+            id="presupuesto-inicio"
+            type="date"
+            value={fechaInicio}
+            onChange={(e) => cambiarFechaInicio(e.target.value)}
+            className={inputClass}
+          />
+        </div>
+        <div>
+          <label htmlFor="presupuesto-fin" className={labelClass}>
+            Hasta
+          </label>
+          <input
+            id="presupuesto-fin"
+            type="date"
+            value={fechaFin}
+            min={fechaInicio || undefined}
+            disabled={!isPersonalizado && !isEdit}
+            onChange={(e) => setFechaFin(e.target.value)}
+            className={`${inputClass} disabled:cursor-not-allowed disabled:opacity-60`}
+          />
+          {!isPersonalizado && !isEdit && (
+            <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
+              Se calcula según el periodo.
+            </p>
+          )}
+          {fechaInvalida && (
+            <p className="mt-1.5 text-xs text-rose-500">La fecha final es anterior al inicio.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="grid gap-5 sm:grid-cols-2">
+        <div>
+          <label htmlFor="presupuesto-categoria" className={labelClass}>
+            Categoría
+          </label>
+          <select
+            id="presupuesto-categoria"
+            value={categoriaId === '' ? '' : categoriaId}
+            onChange={(e) => setCategoriaId(e.target.value === '' ? '' : Number(e.target.value))}
+            className={inputClass}
+          >
+            <option value="">Todas las categorías</option>
+            {gastoCategorias.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="presupuesto-cuenta" className={labelClass}>
+            Cuenta
+          </label>
+          <select
+            id="presupuesto-cuenta"
+            value={cuentaId === '' ? '' : cuentaId}
+            onChange={(e) => setCuentaId(e.target.value === '' ? '' : Number(e.target.value))}
+            className={inputClass}
+          >
+            <option value="">Todas las cuentas</option>
+            {accounts.map((acc) => (
+              <option key={acc.id} value={acc.id}>
+                {acc.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <p className="rounded-2xl bg-slate-50 px-4 py-3 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+        {categoriaId === '' && cuentaId === ''
+          ? 'Sin filtros cuenta todos tus gastos del periodo.'
+          : categoriaId !== '' && cuentaId !== ''
+            ? 'Solo cuenta los gastos de esa categoría hechos desde esa cuenta.'
+            : categoriaId !== ''
+              ? 'Solo cuenta los gastos de esa categoría.'
+              : 'Solo cuenta los gastos hechos desde esa cuenta.'}
+      </p>
+
+      <div>
+        <label htmlFor="presupuesto-notas" className={labelClass}>
+          Notas
+        </label>
+        <textarea
+          id="presupuesto-notas"
+          value={notas}
+          onChange={(e) => setNotas(e.target.value)}
+          rows={2}
+          className={`${inputClass} resize-none`}
+          placeholder="Notas..."
+        />
+      </div>
+
+      {isEdit && (
+        <label
+          htmlFor="presupuesto-activo"
+          className="flex cursor-pointer items-center justify-between rounded-2xl border border-slate-200 px-4 py-3 dark:border-slate-700"
+        >
+          <span>
+            <span className="block text-sm font-medium text-slate-800 dark:text-slate-100">
+              Presupuesto activo
+            </span>
+            <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">
+              Los inactivos dejan de acumular gasto
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            id="presupuesto-activo"
+            checked={activa}
+            onChange={(e) => setActiva(e.target.checked)}
+            className="h-5 w-5 rounded-md border-slate-300 text-brand-500 focus:ring-brand-400"
+          />
+        </label>
+      )}
+
+      <div className="flex gap-3 pt-1">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={loading}
+          className="flex-1 rounded-full border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
+        >
+          Cancelar
+        </button>
+        <button
+          type="submit"
+          disabled={loading || monto <= 0 || !nombre.trim() || fechaInvalida}
+          className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-brand-500 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading && (
+            <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4 animate-spin">
+              <circle
+                cx="12"
+                cy="12"
+                r="9"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                className="opacity-30"
+              />
+              <path
+                d="M21 12a9 9 0 0 0-9-9"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          )}
+          {loading ? 'Guardando…' : isEdit ? 'Actualizar' : 'Crear presupuesto'}
+        </button>
+      </div>
+    </form>
   )
 }

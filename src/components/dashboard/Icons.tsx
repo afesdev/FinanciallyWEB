@@ -62,9 +62,13 @@ export const Icons = {
   user: (
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
   ),
+  dashboard: (
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+  ),
 }
 
 export const NAV_ITEMS = [
+  { key: 'dashboard', label: 'Dashboard', icon: Icons.dashboard },
   { key: 'home', label: 'Inicio', icon: Icons.home },
   { key: 'accounts', label: 'Cuentas', icon: Icons.wallet },
   { key: 'categories', label: 'Categorías', icon: Icons.tags },

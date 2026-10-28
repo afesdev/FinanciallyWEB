@@ -3,7 +3,42 @@
 /* Habilita `dark:` por clase en Tailwind v4 */
 @custom-variant dark (&:where(.dark, .dark *));
 
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('/fonts/plus-jakarta-sans-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('/fonts/plus-jakarta-sans-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0,
+    U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 @theme {
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  --color-brand-50: #eefbf3;
+  --color-brand-100: #d6f5e2;
+  --color-brand-200: #b0eac9;
+  --color-brand-300: #7bd9a8;
+  --color-brand-400: #45c184;
+  --color-brand-500: #1eb256;
+  --color-brand-600: #1a9348;
+  --color-brand-700: #17753c;
+  --color-brand-800: #155d33;
+  --color-brand-900: #124c2c;
+
   --animate-float: float 6s ease-in-out infinite;
   --animate-float-delay: float 6s ease-in-out 2s infinite;
   --animate-float-slow: float 8s ease-in-out 1s infinite;
@@ -13,6 +48,9 @@
   --animate-fade-in-up-delay-3: fadeInUp 0.8s ease-out 0.6s both;
   --animate-pulse-glow: pulseGlow 4s ease-in-out infinite;
   --animate-spin-slow: spin 20s linear infinite;
+  --animate-spin-slower: spin 60s linear infinite;
+  --animate-drift: drift 18s ease-in-out infinite;
+  --animate-grow-bar: growBar 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 @keyframes float {
@@ -36,6 +74,25 @@
   50% { opacity: 0.7; transform: scale(1.05); }
 }
 
+@keyframes drift {
+  0%, 100% { transform: translate3d(0, 0, 0) rotate(0deg); }
+  50% { transform: translate3d(-18px, 14px, 0) rotate(6deg); }
+}
+
+@keyframes growBar {
+  from { transform: scaleY(0.05); }
+  to { transform: scaleY(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 html {
   scroll-behavior: smooth;
 }
@@ -43,5 +100,13 @@ html {
 body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  @apply bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100;
+  @apply bg-slate-50 font-sans text-slate-900 dark:bg-slate-950 dark:text-slate-100;
+}
+
+table,
+input,
+th,
+td,
+.tnum {
+  font-variant-numeric: tabular-nums;
 }

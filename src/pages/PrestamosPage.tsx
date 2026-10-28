@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { motion, useReducedMotion } from 'motion/react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
@@ -9,26 +10,40 @@ import {
   deletePrestamo,
   togglePrestamo,
   createPagoPrestamo,
-  getPagosPrestamo,
   type Prestamo,
   type CreatePrestamoDto,
   type UpdatePrestamoDto,
   type CreatePagoPrestamoDto,
-  type PagoPrestamo,
+  type PrestamoFiltro,
   type Account,
 } from '../services/api'
 import { formatCurrency } from '../utils/format'
+import { prestamoProgreso } from '../utils/prestamos'
 import Sidebar from '../components/dashboard/Sidebar'
 import Navbar from '../components/dashboard/Navbar'
+import { AnimatedCurrency } from '../components/dashboard/StatsCards'
 import { useSidebarCollapsed } from '../hooks/useSidebarCollapsed'
+import LoanCard from '../components/loans/LoanCard'
 import PrestamoFormModal from '../components/loans/PrestamoFormModal'
 import PagoPrestamoModal from '../components/loans/PagoPrestamoModal'
+import PagosPrestamoModal from '../components/loans/PagosPrestamoModal'
 import Swal from 'sweetalert2'
 
 const FILTERS = [
-  { key: 'activos' as const, label: 'Activos' },
-  { key: 'todos' as const, label: 'Todos' },
-]
+  { key: 'ACTIVOS', label: 'Activos' },
+  { key: 'debo', label: 'Yo debo' },
+  { key: 'medeben', label: 'Me deben' },
+  { key: 'SALDADOS', label: 'Saldados' },
+  { key: 'TODOS', label: 'Todos' },
+] as const
+
+type FilterKey = (typeof FILTERS)[number]['key']
+
+function filtroServidor(filtro: FilterKey): PrestamoFiltro {
+  if (filtro === 'SALDADOS') return 'SALDADOS'
+  if (filtro === 'TODOS') return 'TODOS'
+  return 'ACTIVOS'
+}
 
 function PrestamosPage() {
   const navigate = useNavigate()
@@ -38,13 +53,13 @@ function PrestamosPage() {
   const [prestamos, setPrestamos] = useState<Prestamo[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
-  const [filterActivos, setFilterActivos] = useState<'activos' | 'todos'>('activos')
+  const [filtro, setFiltro] = useState<FilterKey>('ACTIVOS')
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingPrestamo, setEditingPrestamo] = useState<Prestamo | null>(null)
   const [pagoPrestamo, setPagoPrestamo] = useState<Prestamo | null>(null)
-  const [pagosPrestamo, setPagosPrestamo] = useState<Prestamo | null>(null)
-  const [pagosList, setPagosList] = useState<PagoPrestamo[]>([])
+  const [historialPrestamo, setHistorialPrestamo] = useState<Prestamo | null>(null)
   const [saving, setSaving] = useState(false)
+  const reduceMotion = useReducedMotion()
 
   const nombre = user?.nombre ?? 'Usuario'
   const moneda = user?.monedaPredeterminada ?? 'COP'
@@ -52,9 +67,8 @@ function PrestamosPage() {
   const fetchPrestamos = async () => {
     try {
       setLoading(true)
-      const activosSolo = filterActivos === 'activos'
       const [data, accountsData] = await Promise.all([
-        getPrestamos(activosSolo),
+        getPrestamos(filtroServidor(filtro)),
         getAccounts(),
       ])
       setPrestamos(data)
@@ -69,18 +83,7 @@ function PrestamosPage() {
 
   useEffect(() => {
     fetchPrestamos()
-  }, [filterActivos])
-
-  const loadPagos = async (prestamo: Prestamo) => {
-    try {
-      const list = await getPagosPrestamo(prestamo.id)
-      setPagosList(Array.isArray(list) ? list : [])
-      setPagosPrestamo(prestamo)
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : 'No se pudieron cargar los pagos.'
-      Swal.fire({ icon: 'error', title: 'Error', text: msg })
-    }
-  }
+  }, [filtro])
 
   const handleCreate = async (data: CreatePrestamoDto) => {
     try {
@@ -128,7 +131,7 @@ function PrestamosPage() {
       await deletePrestamo(p.id)
       Swal.fire({ icon: 'success', title: 'Préstamo eliminado', timer: 1500, showConfirmButton: false })
       fetchPrestamos()
-      if (pagosPrestamo?.id === p.id) setPagosPrestamo(null)
+      if (historialPrestamo?.id === p.id) setHistorialPrestamo(null)
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'No se pudo eliminar.'
       Swal.fire({ icon: 'error', title: 'Error', text: msg })
@@ -169,6 +172,7 @@ function PrestamosPage() {
     else if (key === 'loans') navigate('/loans')
     else if (key === 'budgets') navigate('/budgets')
     else if (key === 'transactions') navigate('/transactions')
+    else if (key === 'dashboard') navigate('/dashboard')
     else if (key === 'reports') navigate('/reports')
     else if (key === 'profile') navigate('/profile')
   }
@@ -177,6 +181,21 @@ function PrestamosPage() {
     logout()
     navigate('/login')
   }
+
+  const totalDebo = prestamos
+    .filter((p) => p.tipo === 'DEUDA')
+    .reduce((s, p) => s + prestamoProgreso(p).pendiente, 0)
+  const totalMeDeben = prestamos
+    .filter((p) => p.tipo === 'PRESTAMO')
+    .reduce((s, p) => s + prestamoProgreso(p).pendiente, 0)
+  const neto = totalMeDeben - totalDebo
+  const maximo = Math.max(totalDebo, totalMeDeben, 1)
+
+  const visibles = prestamos.filter((p) => {
+    if (filtro === 'debo') return p.tipo === 'DEUDA'
+    if (filtro === 'medeben') return p.tipo === 'PRESTAMO'
+    return true
+  })
 
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -196,29 +215,109 @@ function PrestamosPage() {
         <Navbar nombre={nombre} email={user?.email} onOpenSidebar={() => setSidebarOpen(true)} />
 
         <main className="flex-1 px-4 py-6 lg:px-8">
-          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Préstamos</h1>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Gestiona préstamos y deudas, y registra pagos</p>
+              <h1 className="text-2xl font-semibold tracking-[-0.02em] text-slate-900 dark:text-slate-50">
+                Préstamos
+              </h1>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                Lo que debes y lo que te deben, con su historial de pagos
+              </p>
             </div>
-            <button
+            <motion.button
+              whileHover={reduceMotion ? undefined : { y: -2 }}
+              whileTap={{ scale: 0.97 }}
               onClick={() => setShowCreateModal(true)}
-              className="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-400/60 transition-all hover:bg-emerald-600"
+              className="inline-flex items-center gap-2 self-start rounded-full bg-brand-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-600 sm:self-auto"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               Nuevo préstamo
-            </button>
+            </motion.button>
           </div>
 
-          <div className="mb-6 flex gap-2">
+          {!loading && prestamos.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: reduceMotion ? 0 : 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+              className="relative isolate mb-6 overflow-hidden rounded-3xl bg-slate-900 p-6 text-white lg:p-7"
+            >
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 opacity-[0.12] [background-image:linear-gradient(to_right,#fff_1px,transparent_1px),linear-gradient(to_bottom,#fff_1px,transparent_1px)] [background-size:64px_64px] [mask-image:radial-gradient(ellipse_at_top_right,#000,transparent_70%)]"
+              />
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full blur-3xl"
+                style={{ backgroundColor: neto >= 0 ? 'rgba(30,178,86,0.25)' : 'rgba(244,63,94,0.22)' }}
+              />
+
+              <div className="relative">
+                <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-white/50">
+                  Posición neta
+                </p>
+                <p className="mt-2 text-4xl font-semibold tabular-nums tracking-tight">
+                  <span className={neto >= 0 ? 'text-brand-400' : 'text-rose-400'}>
+                    {neto < 0 && '−'}
+                    <AnimatedCurrency value={Math.abs(neto)} moneda={moneda} />
+                  </span>
+                </p>
+                <p className="mt-2 text-sm text-white/50">
+                  {neto > 0
+                    ? 'A tu favor: te deben más de lo que debes'
+                    : neto < 0
+                      ? 'En contra: debes más de lo que te deben'
+                      : 'Estás en equilibrio'}
+                </p>
+              </div>
+
+              <div className="relative mt-7 grid gap-5 sm:grid-cols-2">
+                <div>
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-xs text-white/60">Yo debo</span>
+                    <span className="text-sm font-semibold tabular-nums text-rose-300">
+                      {formatCurrency(totalDebo, moneda)}
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                    <motion.span
+                      initial={{ width: 0 }}
+                      animate={{ width: `${(totalDebo / maximo) * 100}%` }}
+                      transition={{ delay: 0.3, duration: 0.7, ease: 'easeOut' }}
+                      className="block h-full rounded-full bg-rose-400"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-xs text-white/60">Me deben</span>
+                    <span className="text-sm font-semibold tabular-nums text-brand-300">
+                      {formatCurrency(totalMeDeben, moneda)}
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                    <motion.span
+                      initial={{ width: 0 }}
+                      animate={{ width: `${(totalMeDeben / maximo) * 100}%` }}
+                      transition={{ delay: 0.35, duration: 0.7, ease: 'easeOut' }}
+                      className="block h-full rounded-full bg-brand-400"
+                    />
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          <div className="mb-5 flex flex-wrap gap-2">
             {FILTERS.map((f) => (
               <button
                 key={f.key}
-                onClick={() => setFilterActivos(f.key)}
-                className={`rounded-full px-4 py-2 text-sm font-medium transition-all ${
-                  filterActivos === f.key
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-white text-slate-600 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800'
+                onClick={() => setFiltro(f.key)}
+                className={`rounded-full px-4 py-1.5 text-sm transition-colors ${
+                  filtro === f.key
+                    ? 'bg-slate-900 font-medium text-white dark:bg-slate-100 dark:text-slate-900'
+                    : 'border border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:text-slate-100'
                 }`}
               >
                 {f.label}
@@ -227,179 +326,79 @@ function PrestamosPage() {
           </div>
 
           {loading ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {[1, 2, 3, 4, 5, 6].map((i) => (
                 <div
                   key={i}
-                  className="animate-pulse rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900"
-                >
-                  <div className="mb-3 h-4 w-32 rounded bg-slate-200 dark:bg-slate-700" />
-                  <div className="mb-2 h-6 w-24 rounded bg-slate-200 dark:bg-slate-700" />
-                  <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-800" />
-                </div>
+                  className="h-52 animate-pulse rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+                />
               ))}
             </div>
-          ) : prestamos.length > 0 ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {prestamos.map((p) => {
-                const pendiente = p.saldo_pendiente ?? (p.monto_total - (p.monto_pagado ?? 0))
-                const pagado = p.monto_pagado ?? (p.monto_total - pendiente)
-                const progress = p.monto_total > 0 ? Math.min(100, Math.round((pagado / p.monto_total) * 100)) : 0
-                const isDeuda = p.tipo === 'DEUDA'
-                const tipoLabel = isDeuda ? 'Debo' : 'Me deben'
-                return (
-                  <div
-                    key={p.id}
-                    className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all hover:shadow-md dark:border-slate-700 dark:bg-slate-900"
-                  >
-                    <div className={`h-1 w-full ${isDeuda ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-                    <div className="p-5">
-                      <div className="mb-3 flex items-start justify-between">
-                        <div>
-                          <h3 className="text-base font-semibold text-slate-900 dark:text-slate-50">{p.nombre}</h3>
-                          <span
-                            className={`mt-0.5 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
-                              isDeuda
-                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
-                                : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200'
-                            }`}
-                          >
-                            {isDeuda ? (
-                              <>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M12 19V5M5 12l7 7 7-7"/></svg>
-                                {tipoLabel}
-                              </>
-                            ) : (
-                              <>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
-                                {tipoLabel}
-                              </>
-                            )}
-                          </span>
-                        </div>
-                        {!p.activa && (
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                            Inactivo
-                          </span>
-                        )}
-                      </div>
-                      <div className="mb-3">
-                        <div className="mb-1 flex justify-between text-xs">
-                          <span className="text-slate-500 dark:text-slate-400">Progreso</span>
-                          <span className="font-semibold text-slate-700 dark:text-slate-100">{progress}%</span>
-                        </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
-                          <div className={`h-full rounded-full transition-all ${isDeuda ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${progress}%` }} />
-                        </div>
-                        <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-50">
-                          {formatCurrency(pagado, moneda)} de {formatCurrency(p.monto_total, moneda)}
-                        </p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">Pendiente: {formatCurrency(pendiente, moneda)}</p>
-                        {p.fecha_inicio && (
-                          <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
-                            Inicio: {new Date(p.fecha_inicio).toLocaleDateString('es-CO')}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
-                        {p.activa && pendiente > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setPagoPrestamo(p)}
-                            className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/60 dark:bg-emerald-900/30 dark:text-emerald-200 dark:hover:bg-emerald-900/50"
-                          >
-                            Registrar pago
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => loadPagos(p)}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
-                        >
-                          Ver pagos
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditingPrestamo(p)}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleToggle(p)}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
-                        >
-                          {p.activa ? 'Desactivar' : 'Activar'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(p)}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 hover:bg-rose-100 dark:border-rose-500/60 dark:bg-rose-900/30 dark:text-rose-200 dark:hover:bg-rose-900/50"
-                        >
-                          Eliminar
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
+          ) : visibles.length > 0 ? (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {visibles.map((p, i) => (
+                <LoanCard
+                  key={p.id}
+                  prestamo={p}
+                  moneda={moneda}
+                  index={i}
+                  onPagar={setPagoPrestamo}
+                  onPagos={setHistorialPrestamo}
+                  onEdit={setEditingPrestamo}
+                  onToggle={handleToggle}
+                  onDelete={handleDelete}
+                />
+              ))}
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-16 dark:border-slate-700 dark:bg-slate-900">
-              <div className="mb-4 rounded-full bg-emerald-50 p-4 dark:bg-emerald-900/40">
-                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-600">
-                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            <div className="relative isolate flex flex-col items-center justify-center overflow-hidden rounded-3xl border border-dashed border-slate-200 bg-white px-4 py-16 dark:border-slate-700 dark:bg-slate-900">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 opacity-[0.05] [background-image:radial-gradient(#0f172a_1px,transparent_1px)] [background-size:16px_16px] [mask-image:radial-gradient(ellipse_at_center,#000,transparent_70%)]"
+              />
+              <div className="relative mb-4 rounded-2xl bg-brand-50 p-4 ring-1 ring-brand-100 dark:bg-brand-900/30 dark:ring-brand-800/50">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="32"
+                  height="32"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-brand-600 dark:text-brand-400"
+                >
+                  <circle cx="9" cy="8" r="3.25" />
+                  <path d="M3.5 20a5.5 5.5 0 0 1 11 0" />
+                  <path d="M16 5.4a3.25 3.25 0 0 1 0 5.2" />
+                  <path d="M18.5 20a5.6 5.6 0 0 0-2.6-4.7" />
                 </svg>
               </div>
-              <h3 className="mb-1 text-base font-semibold text-slate-900 dark:text-slate-50">Sin préstamos</h3>
-              <p className="mb-4 text-center text-sm text-slate-500 dark:text-slate-400">
-                {filterActivos === 'activos' ? 'No tienes préstamos activos' : 'Crea tu primer préstamo o deuda'}
+              <h3 className="relative mb-1 text-base font-semibold text-slate-900 dark:text-slate-50">
+                {prestamos.length === 0 ? 'Sin préstamos' : 'Nada con ese filtro'}
+              </h3>
+              <p className="relative mb-5 text-center text-sm text-slate-500 dark:text-slate-400">
+                {prestamos.length === 0
+                  ? 'Registra lo que debes o lo que te deben para no perderle el rastro'
+                  : 'Prueba con otro filtro para ver el resto'}
               </p>
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-600"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-                Nuevo préstamo
-              </button>
-            </div>
-          )}
-
-          {/* Modal lista de pagos */}
-          {pagosPrestamo && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4">
-              <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
-                <div className="mb-4 flex items-center justify-between">
-                  <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Pagos: {pagosPrestamo.nombre}</h2>
-                  <button
-                    type="button"
-                    className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-100"
-                    onClick={() => { setPagosPrestamo(null); setPagosList([]) }}
-                  >
-                    ✕
-                  </button>
-                </div>
-                <ul className="max-h-80 space-y-2 overflow-y-auto">
-                  {pagosList.length === 0 ? (
-                    <li className="text-sm text-slate-500 dark:text-slate-400">No hay pagos registrados</li>
-                  ) : (
-                    pagosList.map((pag) => (
-                      <li
-                        key={pag.id}
-                        className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-                      >
-                        <span className="text-slate-900 dark:text-slate-50">
-                          {formatCurrency(pag.monto ?? (pag as any).monto_pago ?? 0, moneda)}
-                        </span>
-                        <span className="text-slate-500 dark:text-slate-400">
-                          {pag.fecha_pago ? new Date(pag.fecha_pago).toLocaleDateString('es-CO') : '-'}
-                        </span>
-                      </li>
-                    ))
-                  )}
-                </ul>
-              </div>
+              {prestamos.length === 0 ? (
+                <button
+                  onClick={() => setShowCreateModal(true)}
+                  className="relative inline-flex items-center gap-2 rounded-full bg-brand-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-600"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                  Nuevo préstamo
+                </button>
+              ) : (
+                <button
+                  onClick={() => setFiltro('TODOS')}
+                  className="relative text-sm font-medium text-brand-600 hover:text-brand-700"
+                >
+                  Ver todos
+                </button>
+              )}
             </div>
           )}
         </main>
@@ -408,14 +407,16 @@ function PrestamosPage() {
       <PrestamoFormModal
         open={showCreateModal}
         accounts={accounts}
+        moneda={moneda}
         loading={saving}
         onClose={() => setShowCreateModal(false)}
         onSubmit={(data) => handleCreate(data as CreatePrestamoDto)}
       />
       <PrestamoFormModal
         open={!!editingPrestamo}
-        prestamo={editingPrestamo ?? undefined}
+        prestamo={editingPrestamo}
         accounts={accounts}
+        moneda={moneda}
         loading={saving}
         onClose={() => setEditingPrestamo(null)}
         onSubmit={handleUpdate}
@@ -428,6 +429,13 @@ function PrestamosPage() {
         loading={saving}
         onClose={() => setPagoPrestamo(null)}
         onSubmit={handlePago}
+      />
+      <PagosPrestamoModal
+        open={!!historialPrestamo}
+        prestamo={historialPrestamo}
+        moneda={moneda}
+        onClose={() => setHistorialPrestamo(null)}
+        onChanged={fetchPrestamos}
       />
     </div>
   )

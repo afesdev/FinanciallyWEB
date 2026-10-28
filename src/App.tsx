@@ -7,6 +7,8 @@ import PublicRoute from './components/auth/PublicRoute'
 import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
+import ForgotPasswordPage from './pages/ForgotPasswordPage'
+import ResetPasswordPage from './pages/ResetPasswordPage'
 import HomePage from './pages/HomePage'
 import AccountsPage from './pages/AccountsPage'
 import CategoriasPage from './pages/CategoriasPage'
@@ -15,6 +17,7 @@ import PrestamosPage from './pages/PrestamosPage'
 import PresupuestosPage from './pages/PresupuestosPage'
 import TransaccionesPage from './pages/TransaccionesPage'
 import ReportesPage from './pages/ReportesPage'
+import DashboardPage from './pages/DashboardPage'
 import ProfilePage from './pages/ProfilePage'
 
 function App() {
@@ -39,6 +42,18 @@ function App() {
                   <RegisterPage />
                 </PublicRoute>
               }
+            />
+            <Route
+              path="/forgot-password"
+              element={
+                <PublicRoute>
+                  <ForgotPasswordPage />
+                </PublicRoute>
+              }
+            />
+            <Route
+              path="/reset-password"
+              element={<ResetPasswordPage />}
             />
             <Route
               path="/home"
@@ -101,6 +116,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <ReportesPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute>
+                  <DashboardPage />
                 </ProtectedRoute>
               }
             />

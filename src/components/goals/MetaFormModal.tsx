@@ -1,5 +1,9 @@
-import { useState, useEffect, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import type { Meta, CreateMetaDto, UpdateMetaDto } from '../../services/api'
+import { formatCurrency } from '../../utils/format'
+import { aporteMensualSugerido, metaProgreso } from '../../utils/metas'
+import Modal from '../ui/Modal'
+import { ProgressRing } from './GoalCard'
 
 const COLORS = [
   { value: '#10B981', label: 'Verde' },
@@ -12,52 +16,100 @@ const COLORS = [
   { value: '#6366F1', label: 'Índigo' },
 ]
 
+const PLAZOS = [
+  { meses: 3, label: '3 meses' },
+  { meses: 6, label: '6 meses' },
+  { meses: 12, label: '1 año' },
+  { meses: 24, label: '2 años' },
+]
+
+const inputClass =
+  'w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100'
+
+const labelClass =
+  'mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400'
+
+function fechaEnMeses(meses: number) {
+  const d = new Date()
+  d.setMonth(d.getMonth() + meses)
+  return d.toISOString().slice(0, 10)
+}
+
 type MetaFormModalProps = {
   open: boolean
   meta?: Meta | null
+  moneda?: string
   loading?: boolean
   onClose: () => void
   onSubmit: (data: CreateMetaDto | UpdateMetaDto) => Promise<void> | void
 }
 
-function MetaFormModal({ open, meta, loading, onClose, onSubmit }: MetaFormModalProps) {
-  const [nombre, setNombre] = useState('')
-  const [descripcion, setDescripcion] = useState('')
-  const [montoObjetivo, setMontoObjetivo] = useState('')
-  const [fechaObjetivo, setFechaObjetivo] = useState('')
-  const [color, setColor] = useState('#10B981')
-  const [icono, setIcono] = useState('')
-  const [activa, setActiva] = useState(true)
+function MetaFormModal({ open, meta, moneda = 'COP', loading, onClose, onSubmit }: MetaFormModalProps) {
+  return (
+    <Modal
+      open={open}
+      title={meta ? 'Editar meta' : 'Nueva meta'}
+      subtitle={
+        meta
+          ? 'Ajusta el objetivo, el plazo o el color'
+          : 'Define cuánto quieres ahorrar y para cuándo'
+      }
+      accentColor={meta?.color || '#10B981'}
+      locked={loading}
+      onClose={onClose}
+    >
+      <MetaForm
+        key={meta?.id ?? 'nueva'}
+        meta={meta}
+        moneda={moneda}
+        loading={loading}
+        onClose={onClose}
+        onSubmit={onSubmit}
+      />
+    </Modal>
+  )
+}
+
+type MetaFormProps = {
+  meta?: Meta | null
+  moneda: string
+  loading?: boolean
+  onClose: () => void
+  onSubmit: (data: CreateMetaDto | UpdateMetaDto) => Promise<void> | void
+}
+
+function MetaForm({ meta, moneda, loading, onClose, onSubmit }: MetaFormProps) {
+  const [nombre, setNombre] = useState(meta?.nombre ?? '')
+  const [descripcion, setDescripcion] = useState(meta?.descripcion ?? '')
+  const [montoObjetivo, setMontoObjetivo] = useState(
+    meta ? String(meta.monto_objetivo || 0) : '',
+  )
+  const [fechaObjetivo, setFechaObjetivo] = useState(
+    meta?.fecha_objetivo ? meta.fecha_objetivo.slice(0, 10) : fechaEnMeses(12),
+  )
+  const [color, setColor] = useState(meta?.color || '#10B981')
+  const [icono] = useState(meta?.icono || '')
+  const [activa, setActiva] = useState(meta?.activa ?? true)
 
   const isEdit = !!meta
 
-  useEffect(() => {
-    if (meta) {
-      setNombre(meta.nombre)
-      setDescripcion(meta.descripcion || '')
-      setMontoObjetivo(String(meta.monto_objetivo || 0))
-      setFechaObjetivo(meta.fecha_objetivo ? meta.fecha_objetivo.slice(0, 10) : '')
-      setColor(meta.color || '#10B981')
-      setIcono(meta.icono || '')
-      setActiva(meta.activa)
-    } else {
-      setNombre('')
-      setDescripcion('')
-      setMontoObjetivo('')
-      const nextYear = new Date()
-      nextYear.setFullYear(nextYear.getFullYear() + 1)
-      setFechaObjetivo(nextYear.toISOString().slice(0, 10))
-      setColor('#10B981')
-      setIcono('')
-      setActiva(true)
-    }
-  }, [meta, open])
+  const monto = Number(montoObjetivo.replace(/\D/g, '')) || 0
+  const progresoActual = meta ? metaProgreso(meta).pct : 0
 
-  if (!open) return null
+  const diasHastaObjetivo = (() => {
+    if (!fechaObjetivo) return null
+    const objetivo = new Date(`${fechaObjetivo}T00:00:00`)
+    if (Number.isNaN(objetivo.getTime())) return null
+    const hoy = new Date()
+    hoy.setHours(0, 0, 0, 0)
+    return Math.round((objetivo.getTime() - hoy.getTime()) / 86_400_000)
+  })()
+
+  const restante = meta ? Math.max(0, monto - Number(meta.monto_actual || 0)) : monto
+  const aporteMensual = aporteMensualSugerido(restante, diasHastaObjetivo)
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    const monto = montoObjetivo ? Number(montoObjetivo.replace(/\D/g, '')) || 0 : 0
     if (monto <= 0) return
     const data: CreateMetaDto | UpdateMetaDto = {
       nombre: nombre.trim(),
@@ -74,130 +126,216 @@ function MetaFormModal({ open, meta, loading, onClose, onSubmit }: MetaFormModal
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 px-4">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">
-            {isEdit ? 'Editar meta' : 'Nueva meta'}
-          </h2>
-          <button
-            type="button"
-            className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-100"
-            onClick={onClose}
-            disabled={loading}
-          >
-            ✕
-          </button>
+    <>
+      <div className="mb-6 flex items-center gap-4 rounded-2xl border border-slate-100 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-800/50">
+        <ProgressRing pct={progresoActual} color={color} size={52} />
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-50">
+            {nombre.trim() || 'Tu nueva meta'}
+          </p>
+          <p className="mt-0.5 text-xs tabular-nums text-slate-500 dark:text-slate-400">
+            {monto > 0 ? formatCurrency(monto, moneda) : 'Sin monto objetivo'}
+            {aporteMensual !== null && monto > 0 && ` · ≈ ${formatCurrency(aporteMensual, moneda)}/mes`}
+          </p>
+        </div>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div>
+          <label htmlFor="meta-nombre" className={labelClass}>
+            Nombre de la meta <span className="text-rose-500">*</span>
+          </label>
+          <input
+            id="meta-nombre"
+            type="text"
+            required
+            autoFocus
+            value={nombre}
+            onChange={(e) => setNombre(e.target.value)}
+            className={inputClass}
+            placeholder="Ej: Viaje a Europa"
+          />
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label htmlFor="meta-descripcion" className={labelClass}>
+            Descripción (opcional)
+          </label>
+          <textarea
+            id="meta-descripcion"
+            value={descripcion}
+            onChange={(e) => setDescripcion(e.target.value)}
+            rows={2}
+            className={`${inputClass} resize-none`}
+            placeholder="Describe tu meta..."
+          />
+        </div>
+
+        <div className="grid gap-5 sm:grid-cols-2">
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-              Nombre de la meta <span className="text-rose-500">*</span>
+            <label htmlFor="meta-monto" className={labelClass}>
+              Monto objetivo <span className="text-rose-500">*</span>
             </label>
             <input
-              type="text"
+              id="meta-monto"
+              type="number"
               required
-              value={nombre}
-              onChange={(e) => setNombre(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              placeholder="Ej: Viaje a Europa"
+              min="1"
+              value={montoObjetivo}
+              onChange={(e) => setMontoObjetivo(e.target.value)}
+              className={`${inputClass} tabular-nums`}
+              placeholder="0"
             />
+            {monto > 0 && (
+              <p className="mt-1.5 text-xs tabular-nums text-slate-400 dark:text-slate-500">
+                {formatCurrency(monto, moneda)}
+              </p>
+            )}
           </div>
-
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">Descripción (opcional)</label>
-            <textarea
-              value={descripcion}
-              onChange={(e) => setDescripcion(e.target.value)}
-              rows={2}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              placeholder="Describe tu meta..."
+            <label htmlFor="meta-fecha" className={labelClass}>
+              Fecha objetivo <span className="text-rose-500">*</span>
+            </label>
+            <input
+              id="meta-fecha"
+              type="date"
+              required
+              value={fechaObjetivo}
+              onChange={(e) => setFechaObjetivo(e.target.value)}
+              className={inputClass}
             />
+            {diasHastaObjetivo !== null && (
+              <p
+                className={`mt-1.5 text-xs ${
+                  diasHastaObjetivo < 0
+                    ? 'text-rose-500'
+                    : 'text-slate-400 dark:text-slate-500'
+                }`}
+              >
+                {diasHastaObjetivo < 0
+                  ? 'La fecha ya pasó'
+                  : diasHastaObjetivo === 0
+                    ? 'Vence hoy'
+                    : `En ${diasHastaObjetivo} ${diasHastaObjetivo === 1 ? 'día' : 'días'}`}
+              </p>
+            )}
           </div>
+        </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                Monto objetivo <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="number"
-                required
-                min="1"
-                value={montoObjetivo}
-                onChange={(e) => setMontoObjetivo(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                placeholder="0"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                Fecha objetivo <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="date"
-                required
-                value={fechaObjetivo}
-                onChange={(e) => setFechaObjetivo(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">Color</label>
-            <div className="flex flex-wrap gap-2">
-              {COLORS.map((c) => (
-                <button
-                  key={c.value}
-                  type="button"
-                  onClick={() => setColor(c.value)}
-                  className={`h-8 w-8 rounded-lg border-2 transition-all ${
-                    color === c.value ? 'border-slate-900 scale-110 dark:border-slate-50' : 'border-slate-200 dark:border-slate-600'
-                  }`}
-                  style={{ backgroundColor: c.value }}
-                  title={c.label}
-                />
-              ))}
-            </div>
-          </div>
-
-          {isEdit && (
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="meta-activa"
-                checked={activa}
-                onChange={(e) => setActiva(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-emerald-500 focus:ring-emerald-400"
-              />
-              <label htmlFor="meta-activa" className="text-sm text-slate-700 dark:text-slate-300">
-                Meta activa
-              </label>
-            </div>
-          )}
-
-          <div className="flex gap-3 pt-2">
+        <div className="flex flex-wrap gap-2">
+          {PLAZOS.map((plazo) => (
             <button
+              key={plazo.meses}
               type="button"
-              onClick={onClose}
-              disabled={loading}
-              className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+              onClick={() => setFechaObjetivo(fechaEnMeses(plazo.meses))}
+              className="rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:text-slate-100"
             >
-              Cancelar
+              {plazo.label}
             </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex-1 rounded-full bg-gradient-to-r from-emerald-500 to-cyan-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:shadow-emerald-400/90 disabled:opacity-60"
-            >
-              {loading ? 'Guardando...' : isEdit ? 'Actualizar' : 'Crear meta'}
-            </button>
+          ))}
+        </div>
+
+        <div>
+          <span className={labelClass}>Color</span>
+          <div className="flex flex-wrap gap-2">
+            {COLORS.map((c) => (
+              <button
+                key={c.value}
+                type="button"
+                onClick={() => setColor(c.value)}
+                aria-label={c.label}
+                aria-pressed={color === c.value}
+                className={`flex h-9 w-9 items-center justify-center rounded-xl transition-transform ${
+                  color === c.value ? 'scale-110' : 'hover:scale-105'
+                }`}
+                style={{
+                  backgroundColor: c.value,
+                  boxShadow:
+                    color === c.value ? `0 0 0 2px #fff, 0 0 0 4px ${c.value}` : undefined,
+                }}
+              >
+                {color === c.value && (
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#fff"
+                    strokeWidth={3}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                    className="h-4 w-4"
+                  >
+                    <path d="m5 12.5 4.5 4.5L19 7.5" />
+                  </svg>
+                )}
+              </button>
+            ))}
           </div>
-        </form>
-      </div>
-    </div>
+        </div>
+
+        {isEdit && (
+          <label
+            htmlFor="meta-activa"
+            className="flex cursor-pointer items-center justify-between rounded-2xl border border-slate-200 px-4 py-3 dark:border-slate-700"
+          >
+            <span>
+              <span className="block text-sm font-medium text-slate-800 dark:text-slate-100">
+                Meta activa
+              </span>
+              <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">
+                Las metas pausadas no admiten aportes
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              id="meta-activa"
+              checked={activa}
+              onChange={(e) => setActiva(e.target.checked)}
+              className="h-5 w-5 rounded-md border-slate-300 text-brand-500 focus:ring-brand-400"
+            />
+          </label>
+        )}
+
+        <div className="flex gap-3 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={loading}
+            className="flex-1 rounded-full border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={loading || monto <= 0 || !nombre.trim()}
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            style={{ backgroundColor: color }}
+          >
+            {loading && (
+              <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4 animate-spin">
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="9"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  className="opacity-30"
+                />
+                <path
+                  d="M21 12a9 9 0 0 0-9-9"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+            )}
+            {loading ? 'Guardando…' : isEdit ? 'Actualizar' : 'Crear meta'}
+          </button>
+        </div>
+      </form>
+    </>
   )
 }
 

@@ -1,3 +1,5 @@
+import { useEffect } from 'react'
+import { animate, motion, useMotionValue, useReducedMotion, useTransform } from 'motion/react'
 import { Icons } from './Icons'
 import { formatCurrency } from '../../utils/format'
 
@@ -7,10 +9,54 @@ type StatsCardsProps = {
   incomeThisMonth: number
   expensesThisMonth: number
   moneda: string
+  variacionIngresos?: number | null
+  variacionGastos?: number | null
 }
 
-export default function StatsCards({ loading, totalBalance, incomeThisMonth, expensesThisMonth, moneda }: StatsCardsProps) {
+export function AnimatedCurrency({ value, moneda }: { value: number; moneda: string }) {
+  const reduceMotion = useReducedMotion()
+  const count = useMotionValue(0)
+  const text = useTransform(count, (latest) => formatCurrency(Math.round(latest), moneda))
+
+  useEffect(() => {
+    if (reduceMotion) {
+      count.set(value)
+      return
+    }
+    const controls = animate(count, value, { duration: 1.1, ease: [0.22, 1, 0.36, 1] })
+    return () => controls.stop()
+  }, [value, count, reduceMotion])
+
+  return <motion.span>{text}</motion.span>
+}
+
+function variacionTexto(valor: number, esGasto: boolean) {
+  const magnitud = Math.abs(valor).toLocaleString('es-CO', { maximumFractionDigits: 1 })
+  if (esGasto) {
+    return valor <= 0
+      ? `${magnitud}% menos que el mes pasado`
+      : `${magnitud}% más que el mes pasado`
+  }
+  return `${valor >= 0 ? '+' : '-'}${magnitud}% vs. mes pasado`
+}
+
+export default function StatsCards({
+  loading,
+  totalBalance,
+  incomeThisMonth,
+  expensesThisMonth,
+  moneda,
+  variacionIngresos,
+  variacionGastos,
+}: StatsCardsProps) {
+  const reduceMotion = useReducedMotion()
   const netBalance = incomeThisMonth - expensesThisMonth
+  const savingsRate =
+    incomeThisMonth > 0 ? Math.round((netBalance / incomeThisMonth) * 100) : null
+
+  const buenaNoticia = 'text-brand-600 dark:text-brand-400'
+  const malaNoticia = 'text-rose-600 dark:text-rose-400'
+  const neutro = 'text-slate-500 dark:text-slate-400'
 
   const cards = [
     {
@@ -19,71 +65,96 @@ export default function StatsCards({ loading, totalBalance, incomeThisMonth, exp
       subtitle: 'Todas tus cuentas',
       subtitleIcon: Icons.shield,
       icon: Icons.wallet,
-      iconBg: 'bg-emerald-50',
-      iconColor: 'text-emerald-600',
-      subtitleColor: 'text-emerald-600',
-      blobColor: 'bg-emerald-500/5 group-hover:bg-emerald-500/10',
+      ring: 'bg-slate-50 text-slate-600 ring-slate-100 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700',
+      valueColor: 'text-slate-900 dark:text-slate-50',
+      subtitleColor: neutro,
     },
     {
       label: 'Ingresos del mes',
       value: incomeThisMonth,
-      subtitle: 'Ingreso acumulado',
+      subtitle:
+        typeof variacionIngresos === 'number'
+          ? variacionTexto(variacionIngresos, false)
+          : 'Ingreso acumulado',
       subtitleIcon: Icons.trendUp,
       icon: Icons.trendUp,
-      iconBg: 'bg-blue-50',
-      iconColor: 'text-blue-600',
-      subtitleColor: 'text-blue-600',
-      blobColor: 'bg-blue-500/5 group-hover:bg-blue-500/10',
+      ring: 'bg-brand-50 text-brand-600 ring-brand-100 dark:bg-brand-900/30 dark:text-brand-400 dark:ring-brand-800/50',
+      valueColor: 'text-brand-600 dark:text-brand-400',
+      subtitleColor:
+        typeof variacionIngresos === 'number'
+          ? variacionIngresos >= 0
+            ? buenaNoticia
+            : malaNoticia
+          : neutro,
     },
     {
       label: 'Gastos del mes',
       value: expensesThisMonth,
-      subtitle: 'Gasto acumulado',
+      subtitle:
+        typeof variacionGastos === 'number'
+          ? variacionTexto(variacionGastos, true)
+          : 'Gasto acumulado',
       subtitleIcon: Icons.trendDown,
       icon: Icons.trendDown,
-      iconBg: 'bg-rose-50',
-      iconColor: 'text-rose-600',
-      subtitleColor: 'text-rose-600',
-      blobColor: 'bg-rose-500/5 group-hover:bg-rose-500/10',
+      ring: 'bg-rose-50 text-rose-600 ring-rose-100 dark:bg-rose-900/30 dark:text-rose-400 dark:ring-rose-800/50',
+      valueColor: 'text-rose-600 dark:text-rose-400',
+      subtitleColor:
+        typeof variacionGastos === 'number'
+          ? variacionGastos <= 0
+            ? buenaNoticia
+            : malaNoticia
+          : neutro,
     },
     {
       label: 'Balance neto',
       value: netBalance,
-      subtitle: 'Este mes',
+      subtitle:
+        savingsRate === null
+          ? 'Este mes'
+          : `${savingsRate >= 0 ? 'Ahorras' : 'Gastas'} ${Math.abs(savingsRate)}% de tus ingresos`,
       subtitleIcon: Icons.clock,
       icon: Icons.chartBar,
-      iconBg: 'bg-violet-50',
-      iconColor: 'text-violet-600',
-      subtitleColor: 'text-slate-500',
-      blobColor: 'bg-violet-500/5 group-hover:bg-violet-500/10',
-      valueColor: netBalance >= 0 ? 'text-emerald-600' : 'text-rose-600',
+      ring: 'bg-slate-50 text-slate-600 ring-slate-100 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700',
+      valueColor: netBalance >= 0 ? 'text-slate-900 dark:text-slate-50' : malaNoticia,
+      subtitleColor: neutro,
     },
   ]
 
   return (
-    <div className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      {cards.map((card) => (
-        <div
+    <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {cards.map((card, i) => (
+        <motion.div
           key={card.label}
-          className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:shadow-md dark:border-slate-700 dark:bg-slate-900"
+          initial={{ opacity: 0, y: reduceMotion ? 0 : 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.08 * i, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+          whileHover={reduceMotion ? undefined : { y: -3 }}
+          className="group relative overflow-hidden rounded-2xl border border-slate-900/5 bg-white p-5 transition-shadow hover:shadow-lg hover:shadow-slate-200/60 dark:border-slate-700 dark:bg-slate-900 dark:hover:shadow-none"
         >
-          <div className={`absolute -right-6 -top-6 h-24 w-24 rounded-full transition-all ${card.blobColor}`} />
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+          <div className="relative mb-4 flex items-start justify-between">
+            <span className="text-[0.7rem] font-medium uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">
               {card.label}
             </span>
-            <div className={`rounded-lg p-2 ${card.iconBg} ${card.iconColor}`}>
-              {card.icon}
-            </div>
+            <div className={`rounded-xl p-2 ring-1 ${card.ring}`}>{card.icon}</div>
           </div>
-          <p className={`text-2xl font-bold ${card.valueColor ?? 'text-slate-900'} dark:text-slate-50`}>
-            {loading ? '...' : formatCurrency(card.value, moneda)}
-          </p>
-          <p className={`mt-1 flex items-center gap-1 text-xs ${card.subtitleColor}`}>
-            {card.subtitleIcon}
-            {card.subtitle}
-          </p>
-        </div>
+
+          {loading ? (
+            <div className="relative">
+              <div className="h-8 w-32 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />
+              <div className="mt-2 h-3 w-24 animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
+            </div>
+          ) : (
+            <div className="relative">
+              <p className={`text-2xl font-semibold tabular-nums tracking-tight ${card.valueColor}`}>
+                <AnimatedCurrency value={card.value} moneda={moneda} />
+              </p>
+              <p className={`mt-1.5 flex items-center gap-1.5 text-xs ${card.subtitleColor}`}>
+                {card.subtitleIcon}
+                {card.subtitle}
+              </p>
+            </div>
+          )}
+        </motion.div>
       ))}
     </div>
   )

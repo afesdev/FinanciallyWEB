@@ -13,20 +13,27 @@ import {
   type CreateMetaDto,
   type UpdateMetaDto,
   type CreateAporteDto,
+  type MetaFiltro,
   type Account,
 } from '../services/api'
+import { motion, useReducedMotion } from 'motion/react'
 import { formatCurrency } from '../utils/format'
 import Sidebar from '../components/dashboard/Sidebar'
 import Navbar from '../components/dashboard/Navbar'
+import { AnimatedCurrency } from '../components/dashboard/StatsCards'
 import { useSidebarCollapsed } from '../hooks/useSidebarCollapsed'
+import GoalCard, { ProgressRing } from '../components/goals/GoalCard'
+import { metaProgreso } from '../utils/metas'
 import MetaFormModal from '../components/goals/MetaFormModal'
 import AporteModal from '../components/goals/AporteModal'
+import AportesModal from '../components/goals/AportesModal'
 import Swal from 'sweetalert2'
 
-const FILTERS = [
-  { key: 'TODAS' as const, label: 'Todas' },
-  { key: 'ACTIVAS' as const, label: 'Activas' },
-  { key: 'COMPLETADAS' as const, label: 'Completadas' },
+const FILTERS: { key: MetaFiltro; label: string }[] = [
+  { key: 'TODAS', label: 'Todas' },
+  { key: 'ACTIVAS', label: 'Activas' },
+  { key: 'COMPLETADAS', label: 'Completadas' },
+  { key: 'PAUSADAS', label: 'Pausadas' },
 ]
 
 function MetasPage() {
@@ -37,11 +44,13 @@ function MetasPage() {
   const [metas, setMetas] = useState<Meta[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'ACTIVAS' | 'COMPLETADAS' | 'TODAS'>('ACTIVAS')
+  const [filter, setFilter] = useState<MetaFiltro>('ACTIVAS')
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingMeta, setEditingMeta] = useState<Meta | null>(null)
   const [aporteMeta, setAporteMeta] = useState<Meta | null>(null)
+  const [historialMeta, setHistorialMeta] = useState<Meta | null>(null)
   const [saving, setSaving] = useState(false)
+  const reduceMotion = useReducedMotion()
 
   const nombre = user?.nombre ?? 'Usuario'
   const moneda = user?.monedaPredeterminada ?? 'COP'
@@ -59,11 +68,11 @@ function MetasPage() {
       ])
       setMetas(goalsData)
       setAccounts(accountsData)
-    } catch (error: any) {
+    } catch (error) {
       Swal.fire({
         icon: 'error',
         title: 'Error al cargar metas',
-        text: error?.message || 'No se pudieron cargar las metas.',
+        text: error instanceof Error ? error.message : 'No se pudieron cargar las metas.',
       })
     } finally {
       setLoading(false)
@@ -83,11 +92,11 @@ function MetasPage() {
       })
       setShowCreateModal(false)
       fetchData()
-    } catch (error: any) {
+    } catch (error) {
       Swal.fire({
         icon: 'error',
         title: 'Error al crear meta',
-        text: error?.message || 'No se pudo crear la meta.',
+        text: error instanceof Error ? error.message : 'No se pudo crear la meta.',
       })
     } finally {
       setSaving(false)
@@ -107,11 +116,11 @@ function MetasPage() {
       })
       setEditingMeta(null)
       fetchData()
-    } catch (error: any) {
+    } catch (error) {
       Swal.fire({
         icon: 'error',
         title: 'Error al actualizar',
-        text: error?.message,
+        text: error instanceof Error ? error.message : 'Ocurrio un error inesperado.',
       })
     } finally {
       setSaving(false)
@@ -138,11 +147,11 @@ function MetasPage() {
         showConfirmButton: false,
       })
       fetchData()
-    } catch (error: any) {
+    } catch (error) {
       Swal.fire({
         icon: 'error',
         title: 'Error al eliminar',
-        text: error?.message,
+        text: error instanceof Error ? error.message : 'Ocurrio un error inesperado.',
       })
     }
   }
@@ -151,11 +160,11 @@ function MetasPage() {
     try {
       await toggleMetaActiva(meta.id, !meta.activa)
       fetchData()
-    } catch (error: any) {
+    } catch (error) {
       Swal.fire({
         icon: 'error',
         title: 'Error',
-        text: error?.message,
+        text: error instanceof Error ? error.message : 'Ocurrio un error inesperado.',
       })
     }
   }
@@ -173,11 +182,11 @@ function MetasPage() {
       })
       setAporteMeta(null)
       fetchData()
-    } catch (error: any) {
+    } catch (error) {
       Swal.fire({
         icon: 'error',
         title: 'Error al agregar aporte',
-        text: error?.message,
+        text: error instanceof Error ? error.message : 'Ocurrio un error inesperado.',
       })
     } finally {
       setSaving(false)
@@ -197,12 +206,17 @@ function MetasPage() {
     else if (key === 'loans') navigate('/loans')
     else if (key === 'budgets') navigate('/budgets')
     else if (key === 'transactions') navigate('/transactions')
+    else if (key === 'dashboard') navigate('/dashboard')
     else if (key === 'reports') navigate('/reports')
     else if (key === 'profile') navigate('/profile')
   }
 
   const totalObjetivo = metas.reduce((s, m) => s + (m.monto_objetivo || 0), 0)
   const totalActual = metas.reduce((s, m) => s + (m.monto_actual || 0), 0)
+  const progresoGlobal =
+    totalObjetivo > 0 ? Math.min(100, Math.round((totalActual / totalObjetivo) * 100)) : 0
+  const completadas = metas.filter((m) => metaProgreso(m).completada).length
+  const porAhorrar = Math.max(0, totalObjetivo - totalActual)
 
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -222,35 +236,93 @@ function MetasPage() {
         <Navbar nombre={nombre} email={user?.email} onOpenSidebar={() => setSidebarOpen(true)} />
 
         <main className="flex-1 px-4 py-6 lg:px-8">
-          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Mis metas</h1>
+              <h1 className="text-2xl font-semibold tracking-[-0.02em] text-slate-900 dark:text-slate-50">
+                Mis metas
+              </h1>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                 Define metas de ahorro y haz seguimiento a tu progreso
               </p>
             </div>
-            <button
+            <motion.button
+              whileHover={reduceMotion ? undefined : { y: -2 }}
+              whileTap={{ scale: 0.97 }}
               onClick={() => setShowCreateModal(true)}
-              className="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-400/60 transition-all hover:bg-emerald-600"
+              className="inline-flex items-center gap-2 self-start rounded-full bg-brand-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-600 sm:self-auto"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M5 12h14" />
                 <path d="M12 5v14" />
               </svg>
               Nueva meta
-            </button>
+            </motion.button>
           </div>
 
+          {/* Resumen */}
+          {!loading && metas.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: reduceMotion ? 0 : 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+              className="relative isolate mb-6 overflow-hidden rounded-3xl bg-slate-900 p-6 text-white lg:p-7"
+            >
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 opacity-[0.12] [background-image:linear-gradient(to_right,#fff_1px,transparent_1px),linear-gradient(to_bottom,#fff_1px,transparent_1px)] [background-size:64px_64px] [mask-image:radial-gradient(ellipse_at_top_right,#000,transparent_70%)]"
+              />
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full bg-brand-500/25 blur-3xl"
+              />
+
+              <div className="relative flex flex-wrap items-center justify-between gap-6">
+                <div>
+                  <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-white/50">
+                    Total ahorrado
+                  </p>
+                  <p className="mt-2 text-4xl font-semibold tabular-nums tracking-tight">
+                    <AnimatedCurrency value={totalActual} moneda={moneda} />
+                  </p>
+                  <p className="mt-2 text-sm tabular-nums text-white/50">
+                    de {formatCurrency(totalObjetivo, moneda)} · faltan{' '}
+                    {formatCurrency(porAhorrar, moneda)}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-5">
+                  <div className="text-right">
+                    <p className="text-2xl font-semibold tabular-nums">{metas.length}</p>
+                    <p className="text-xs text-white/50">
+                      {metas.length === 1 ? 'meta' : 'metas'}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-semibold tabular-nums text-brand-400">
+                      {completadas}
+                    </p>
+                    <p className="text-xs text-white/50">
+                      {completadas === 1 ? 'completada' : 'completadas'}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-white/5 p-2 ring-1 ring-white/10">
+                    <ProgressRing pct={progresoGlobal} color="#45c184" size={64} />
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           {/* Filtros */}
-          <div className="mb-6 flex gap-2">
+          <div className="mb-5 flex flex-wrap gap-2">
             {FILTERS.map((f) => (
               <button
                 key={f.key}
                 onClick={() => setFilter(f.key)}
-                className={`rounded-full px-4 py-2 text-sm font-medium transition-all ${
+                className={`rounded-full px-4 py-1.5 text-sm transition-colors ${
                   filter === f.key
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-white text-slate-600 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800'
+                    ? 'bg-slate-900 font-medium text-white dark:bg-slate-100 dark:text-slate-900'
+                    : 'border border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:text-slate-100'
                 }`}
               >
                 {f.label}
@@ -258,147 +330,49 @@ function MetasPage() {
             ))}
           </div>
 
-          {/* Resumen */}
-          {!loading && metas.length > 0 && (
-            <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Total ahorrado (metas visibles)</p>
-                  <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-slate-50">{formatCurrency(totalActual, moneda)}</p>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">de {formatCurrency(totalObjetivo, moneda)} objetivo</p>
-                </div>
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-300">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10" />
-                    <circle cx="12" cy="12" r="6" />
-                    <circle cx="12" cy="12" r="2" />
-                  </svg>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Lista de metas */}
           {loading ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {[1, 2, 3, 4, 5, 6].map((i) => (
                 <div
                   key={i}
-                  className="animate-pulse rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900"
-                >
-                  <div className="mb-3 h-4 w-32 rounded bg-slate-200 dark:bg-slate-700" />
-                  <div className="mb-2 h-6 w-24 rounded bg-slate-200 dark:bg-slate-700" />
-                  <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-800" />
-                </div>
+                  className="h-52 animate-pulse rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+                />
               ))}
             </div>
           ) : metas.length > 0 ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {metas.map((meta) => {
-                const progress = meta.monto_objetivo > 0
-                  ? Math.min(100, Math.round((meta.monto_actual / meta.monto_objetivo) * 100))
-                  : 0
-                const isComplete = progress >= 100
-                const color = meta.color || '#10B981'
-                return (
-                  <div
-                    key={meta.id}
-                    className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all hover:shadow-md dark:border-slate-700 dark:bg-slate-900"
-                  >
-                    <div className="h-1 w-full" style={{ backgroundColor: color }} />
-                    <div className="p-5">
-                      <div className="mb-3 flex items-start justify-between">
-                        <div>
-                          <h3 className="text-base font-semibold text-slate-900 dark:text-slate-50">{meta.nombre}</h3>
-                          {meta.descripcion && (
-                            <p className="mt-0.5 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{meta.descripcion}</p>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1">
-                          {!meta.activa && (
-                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                              Inactiva
-                            </span>
-                          )}
-                          {isComplete && (
-                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-                              ¡Completada!
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="mb-3">
-                        <div className="mb-1 flex justify-between text-xs">
-                          <span className="text-slate-500 dark:text-slate-400">Progreso</span>
-                          <span className="font-semibold text-slate-700 dark:text-slate-100">{progress}%</span>
-                        </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
-                          <div
-                            className="h-full rounded-full transition-all"
-                            style={{ width: `${progress}%`, backgroundColor: color }}
-                          />
-                        </div>
-                        <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-50">
-                          {formatCurrency(meta.monto_actual, moneda)} de {formatCurrency(meta.monto_objetivo, moneda)}
-                        </p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">
-                          Objetivo: {new Date(meta.fecha_objetivo).toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' })}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
-                        {meta.activa && !isComplete && (
-                          <button
-                            type="button"
-                            onClick={() => setAporteMeta(meta)}
-                            className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100 dark:border-emerald-500/60 dark:bg-emerald-900/30 dark:text-emerald-200 dark:hover:bg-emerald-900/50"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M5 12h14" />
-                              <path d="M12 5v14" />
-                            </svg>
-                            Aportar
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => setEditingMeta(meta)}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleToggleActiva(meta)}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
-                        >
-                          {meta.activa ? 'Desactivar' : 'Activar'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(meta)}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 hover:bg-rose-100 dark:border-rose-500/60 dark:bg-rose-900/30 dark:text-rose-200 dark:hover:bg-rose-900/50"
-                        >
-                          Eliminar
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {metas.map((meta, i) => (
+                <GoalCard
+                  key={meta.id}
+                  meta={meta}
+                  moneda={moneda}
+                  index={i}
+                  onAportar={setAporteMeta}
+                  onHistorial={setHistorialMeta}
+                  onEdit={setEditingMeta}
+                  onToggle={handleToggleActiva}
+                  onDelete={handleDelete}
+                />
+              ))}
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-16 dark:border-slate-700 dark:bg-slate-900">
-              <div className="mb-4 rounded-full bg-emerald-50 p-4 dark:bg-emerald-900/40">
-                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-600">
-                  <circle cx="12" cy="12" r="10" />
-                  <circle cx="12" cy="12" r="6" />
-                  <circle cx="12" cy="12" r="2" />
+            <div className="relative isolate flex flex-col items-center justify-center overflow-hidden rounded-3xl border border-dashed border-slate-200 bg-white px-4 py-16 dark:border-slate-700 dark:bg-slate-900">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 opacity-[0.05] [background-image:radial-gradient(#0f172a_1px,transparent_1px)] [background-size:16px_16px] [mask-image:radial-gradient(ellipse_at_center,#000,transparent_70%)]"
+              />
+              <div className="relative mb-4 rounded-2xl bg-brand-50 p-4 ring-1 ring-brand-100 dark:bg-brand-900/30 dark:ring-brand-800/50">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-brand-600 dark:text-brand-400">
+                  <circle cx="12" cy="12" r="8.5" />
+                  <circle cx="12" cy="12" r="4" />
+                  <circle cx="12" cy="12" r="0.6" />
                 </svg>
               </div>
-              <h3 className="mb-1 text-base font-semibold text-slate-900 dark:text-slate-50">
+              <h3 className="relative mb-1 text-base font-semibold text-slate-900 dark:text-slate-50">
                 {filter === 'TODAS' ? 'Sin metas' : `Sin metas ${filter.toLowerCase()}`}
               </h3>
-              <p className="mb-4 text-center text-sm text-slate-500 dark:text-slate-400">
+              <p className="relative mb-5 text-center text-sm text-slate-500 dark:text-slate-400">
                 {filter === 'TODAS'
                   ? 'Crea tu primera meta de ahorro para comenzar'
                   : 'No hay metas que coincidan con el filtro'}
@@ -406,7 +380,7 @@ function MetasPage() {
               {filter === 'TODAS' && (
                 <button
                   onClick={() => setShowCreateModal(true)}
-                  className="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-600"
+                  className="relative inline-flex items-center gap-2 rounded-full bg-brand-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-600"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M5 12h14" />
@@ -422,6 +396,7 @@ function MetasPage() {
 
       <MetaFormModal
         open={showCreateModal}
+        moneda={moneda}
         loading={saving}
         onClose={() => setShowCreateModal(false)}
         onSubmit={(data) => handleCreate(data as CreateMetaDto)}
@@ -429,9 +404,17 @@ function MetasPage() {
       <MetaFormModal
         open={!!editingMeta}
         meta={editingMeta}
+        moneda={moneda}
         loading={saving}
         onClose={() => setEditingMeta(null)}
         onSubmit={handleUpdate}
+      />
+      <AportesModal
+        open={!!historialMeta}
+        meta={historialMeta}
+        moneda={moneda}
+        onClose={() => setHistorialMeta(null)}
+        onChanged={fetchData}
       />
       <AporteModal
         open={!!aporteMeta}

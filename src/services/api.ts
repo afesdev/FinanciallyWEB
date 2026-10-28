@@ -18,12 +18,23 @@ export type UpdateProfileDto = {
 
 export type AuthResponse = {
   accessToken: string
+  refreshToken?: string
   user: AuthUser
+}
+
+const AUTH_KEY = 'financially_auth'
+
+class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
 }
 
 function getStoredAuth(): AuthResponse | null {
   try {
-    const raw = localStorage.getItem('financially_auth')
+    const raw = localStorage.getItem(AUTH_KEY)
     if (!raw) return null
     return JSON.parse(raw) as AuthResponse
   } catch {
@@ -31,8 +42,20 @@ function getStoredAuth(): AuthResponse | null {
   }
 }
 
+function setStoredAuth(auth: AuthResponse) {
+  localStorage.setItem(AUTH_KEY, JSON.stringify(auth))
+}
+
+function clearStoredAuth() {
+  localStorage.removeItem(AUTH_KEY)
+}
+
 function getToken(): string | null {
   return getStoredAuth()?.accessToken ?? null
+}
+
+function getRefreshToken(): string | null {
+  return getStoredAuth()?.refreshToken ?? null
 }
 
 async function request<T>(path: string, options: RequestInit): Promise<T> {
@@ -53,28 +76,73 @@ async function request<T>(path: string, options: RequestInit): Promise<T> {
     } catch {
       // ignorar parseo
     }
-    throw new Error(message)
+    throw new ApiError(message, response.status)
   }
 
   return (await response.json()) as T
 }
 
-async function authRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+// Renovación single-flight: si varias peticiones fallan a la vez con 401,
+// solo se dispara un /auth/refresh y todas esperan el mismo resultado.
+let refreshPromise: Promise<boolean> | null = null
+
+async function doRefresh(): Promise<boolean> {
+  const refreshToken = getRefreshToken()
+  if (!refreshToken) return false
+  try {
+    const auth = await request<AuthResponse>('/api/auth/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken }),
+    })
+    setStoredAuth(auth)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function tryRefresh(): Promise<boolean> {
+  if (!refreshPromise) {
+    refreshPromise = doRefresh().finally(() => {
+      refreshPromise = null
+    })
+  }
+  return refreshPromise
+}
+
+function forceLogout() {
+  clearStoredAuth()
+  window.dispatchEvent(new Event('auth:logout'))
+}
+
+async function authRequest<T>(path: string, options: RequestInit = {}, retry = true): Promise<T> {
   const token = getToken()
   if (!token) throw new Error('No hay sesión activa.')
-  return request<T>(path, {
-    ...options,
-    headers: {
-      ...options.headers,
-      Authorization: `Bearer ${token}`,
-    },
-  })
+  try {
+    return await request<T>(path, {
+      ...options,
+      headers: {
+        ...options.headers,
+        Authorization: `Bearer ${token}`,
+      },
+    })
+  } catch (error) {
+    if (retry && error instanceof ApiError && error.status === 401) {
+      const renovado = await tryRefresh()
+      if (renovado) return authRequest<T>(path, options, false)
+      forceLogout()
+    }
+    throw error
+  }
 }
 
 export function login(payload: { email: string; password: string }) {
   return request<AuthResponse>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify(payload),
+  }).then((auth) => {
+    setStoredAuth(auth)
+    return auth
   })
 }
 
@@ -87,6 +155,39 @@ export function register(payload: { name: string; email: string; password: strin
   return request<AuthResponse>('/api/auth/register', {
     method: 'POST',
     body: JSON.stringify(body),
+  }).then((auth) => {
+    setStoredAuth(auth)
+    return auth
+  })
+}
+
+/** Revoca el refresh token en el servidor y limpia el almacenamiento local. */
+export async function logoutSession(): Promise<void> {
+  const refreshToken = getRefreshToken()
+  if (refreshToken) {
+    try {
+      await request('/api/auth/logout', {
+        method: 'POST',
+        body: JSON.stringify({ refreshToken }),
+      })
+    } catch {
+      // aunque falle la revocación remota, limpiamos localmente
+    }
+  }
+  clearStoredAuth()
+}
+
+export function forgotPassword(email: string) {
+  return request<{ message: string }>('/api/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email: email.trim() }),
+  })
+}
+
+export function resetPassword(token: string, password: string) {
+  return request<{ message: string }>('/api/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, password }),
   })
 }
 
@@ -119,6 +220,16 @@ export type Account = {
   descripcion?: string
   activa: boolean
   fecha_creacion: Date
+}
+
+export const ACCOUNT_TYPE_LABELS: Record<Account['tipo'], string> = {
+  BANCARIA: 'Bancaria',
+  EFECTIVO: 'Efectivo',
+  TARJETA_CREDITO: 'Tarjeta de crédito',
+  TARJETA_DEBITO: 'Tarjeta de débito',
+  DIGITAL: 'Digital',
+  AHORRO: 'Ahorro',
+  INVERSION: 'Inversión',
 }
 
 export type CreateAccountDto = {
@@ -390,6 +501,20 @@ export type CreateAporteDto = {
   notas?: string
 }
 
+export type MetaFiltro = 'ACTIVAS' | 'COMPLETADAS' | 'PAUSADAS' | 'TODAS'
+
+export type Aporte = {
+  id: number
+  meta_id: number
+  cuenta_id?: number | null
+  cuenta_nombre?: string | null
+  cuenta_color?: string | null
+  monto_aporte: number
+  fecha_aporte: string
+  notas?: string | null
+  transaccion_id?: number | null
+}
+
 function mapMetaFromApi(raw: any): Meta {
   return {
     id: raw.id,
@@ -407,7 +532,7 @@ function mapMetaFromApi(raw: any): Meta {
   }
 }
 
-export function getGoals(filtro?: 'ACTIVAS' | 'COMPLETADAS' | 'TODAS') {
+export function getGoals(filtro?: MetaFiltro) {
   const query = filtro ? `?filtro=${filtro}` : ''
   return authRequest<any[]>(`/api/metas${query}`).then((list) =>
     (list || []).map(mapMetaFromApi)
@@ -473,7 +598,27 @@ export function createAporte(metaId: number, payload: CreateAporteDto) {
 }
 
 export function getAportes(metaId: number) {
-  return authRequest<any[]>(`/api/metas/${metaId}/aportes`)
+  return authRequest<any[]>(`/api/metas/${metaId}/aportes`).then((list) =>
+    (list || []).map(
+      (raw): Aporte => ({
+        id: Number(raw.id),
+        meta_id: Number(raw.meta_id),
+        cuenta_id: raw.cuenta_id ?? null,
+        cuenta_nombre: raw.cuenta_nombre ?? null,
+        cuenta_color: raw.cuenta_color ?? null,
+        monto_aporte: Number(raw.monto_aporte ?? 0),
+        fecha_aporte: raw.fecha_aporte,
+        notas: raw.notas ?? null,
+        transaccion_id: raw.transaccion_id ?? null,
+      }),
+    ),
+  )
+}
+
+export function deleteAporte(metaId: number, aporteId: number) {
+  return authRequest<any>(`/api/metas/${metaId}/aportes/${aporteId}`, {
+    method: 'DELETE',
+  }).then(mapMetaFromApi)
 }
 
 // ─── Tipos de Préstamos ───
@@ -495,6 +640,8 @@ export type Prestamo = {
   monto_pagado?: number
 }
 
+export type PrestamoFiltro = 'ACTIVOS' | 'SALDADOS' | 'INACTIVOS' | 'TODOS'
+
 export type CreatePrestamoDto = {
   nombre: string
   tipo: 'PRESTAMO' | 'DEUDA'
@@ -504,6 +651,7 @@ export type CreatePrestamoDto = {
   fechaFin?: string
   cuentaId?: number
   notas?: string
+  registrarMovimiento?: boolean
 }
 
 export type UpdatePrestamoDto = Partial<CreatePrestamoDto> & {
@@ -555,8 +703,8 @@ function mapPrestamoFromApi(raw: any): Prestamo {
   }
 }
 
-export function getPrestamos(activosSolo?: boolean) {
-  const query = activosSolo === undefined ? '' : `?activos=${activosSolo}`
+export function getPrestamos(filtro?: PrestamoFiltro) {
+  const query = filtro ? `?filtro=${filtro}` : ''
   return authRequest<any[]>(`/api/prestamos${query}`).then((list) =>
     (list || []).map(mapPrestamoFromApi)
   )
@@ -577,6 +725,9 @@ export function createPrestamo(payload: CreatePrestamoDto) {
   if (payload.fechaFin) body.fechaFin = payload.fechaFin
   if (payload.cuentaId !== undefined) body.cuentaId = payload.cuentaId
   if (payload.notas?.trim()) body.notas = payload.notas.trim()
+  if (payload.registrarMovimiento !== undefined) {
+    body.registrarMovimiento = payload.registrarMovimiento
+  }
   return authRequest<any>('/api/prestamos', {
     method: 'POST',
     body: JSON.stringify(body),
@@ -624,7 +775,20 @@ export function createPagoPrestamo(prestamoId: number, payload: CreatePagoPresta
 }
 
 export function getPagosPrestamo(prestamoId: number) {
-  return authRequest<any[]>(`/api/prestamos/${prestamoId}/pagos`)
+  return authRequest<any[]>(`/api/prestamos/${prestamoId}/pagos`).then((list) =>
+    (list || []).map(
+      (raw): PagoPrestamo => ({
+        id: Number(raw.id),
+        prestamo_id: Number(raw.prestamo_id),
+        cuenta_id: raw.cuenta_id ?? null,
+        monto: Number(raw.monto ?? raw.monto_pago ?? 0),
+        monto_pago: Number(raw.monto_pago ?? raw.monto ?? 0),
+        fecha_pago: raw.fecha_pago,
+        notas: raw.notas ?? null,
+        fecha_creacion: raw.fecha_creacion,
+      }),
+    ),
+  )
 }
 
 export function updatePagoPrestamo(pagoId: number, payload: UpdatePagoPrestamoDto) {
@@ -742,6 +906,69 @@ export function updatePresupuesto(id: number, payload: UpdatePresupuestoDto) {
   }).then(mapPresupuestoFromApi)
 }
 
+// ─── Tipos del Dashboard ───
+export type DashboardResponse = {
+  resumen_mensual: {
+    ingresos: number
+    gastos: number
+    balance: number
+    ingresos_mes_anterior?: number
+    gastos_mes_anterior?: number
+    balance_mes_anterior?: number
+    variacion_ingresos?: number
+    variacion_gastos?: number
+  }
+  gastos_por_categoria: Array<{
+    categoria_id: number
+    nombre: string
+    color?: string
+    icono?: string
+    total: number
+    porcentaje: number
+    transacciones: number
+  }>
+  ingresos_por_categoria: Array<{
+    categoria_id: number
+    nombre: string
+    color?: string
+    icono?: string
+    total: number
+    porcentaje: number
+    transacciones: number
+  }>
+  evolucion_mensual: Array<{
+    mes: string
+    ingresos: number
+    gastos: number
+  }>
+  presupuestos: Array<{
+    id: number
+    nombre: string
+    monto_limite: number
+    monto_gastado: number
+    porcentaje: number
+    periodo: string
+    categoria_nombre: string
+    categoria_color?: string
+    categoria_icono?: string
+    dias_restantes: number
+  }>
+  metas: Array<{
+    id: number
+    nombre: string
+    monto_actual: number
+    monto_objetivo: number
+    porcentaje: number
+    color?: string
+    icono?: string
+  }>
+}
+
+export function getDashboard(fecha?: string) {
+  const query = fecha ? `?fecha=${encodeURIComponent(fecha)}` : ''
+  return authRequest<DashboardResponse>(`/api/dashboard${query}`)
+}
+
 export function deletePresupuesto(id: number) {
   return authRequest<{ success?: boolean }>(`/api/presupuestos/${id}`, {
     method: 'DELETE',
@@ -763,6 +990,38 @@ export function recalcPresupuesto(id: number) {
 export function getPresupuestoResumen(fecha?: string) {
   const query = fecha ? `?fecha=${encodeURIComponent(fecha)}` : ''
   return authRequest<any>(`/api/presupuestos/resumen${query}`)
+}
+
+export type FrecuenciaRecurrente =
+  | 'DIARIO'
+  | 'SEMANAL'
+  | 'MENSUAL'
+  | 'BIMESTRAL'
+  | 'TRIMESTRAL'
+  | 'SEMESTRAL'
+  | 'ANUAL'
+
+export type PagoRecurrente = {
+  id: number
+  usuario_id: number
+  categoria_id?: number | null
+  cuenta_id?: number | null
+  metodo_pago_id?: number | null
+  monto: number
+  descripcion: string
+  frecuencia: FrecuenciaRecurrente
+  dia_vencimiento?: number | null
+  dia_semana?: number | null
+  fecha_inicio: string
+  fecha_fin?: string | null
+  activo: boolean
+  categoria_nombre?: string | null
+  categoria_color?: string | null
+  cuenta_nombre?: string | null
+}
+
+export function getPagosRecurrentes() {
+  return authRequest<PagoRecurrente[]>('/api/pagos-recurrentes')
 }
 
 export function getAccount(id: number) {
